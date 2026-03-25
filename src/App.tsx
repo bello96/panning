@@ -122,21 +122,21 @@ export default function App() {
   if (pendingCode) {
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <div className="bg-[#16213e] rounded-2xl p-8 w-full max-w-sm shadow-xl border border-[#4cc9f0]/20">
+        <div className="bg-white rounded-2xl p-8 w-full max-w-sm shadow-xl">
           {pendingOwnerName && (
             <div className="text-center mb-4">
-              <span className="text-[#4cc9f0] font-bold">{pendingOwnerName}</span>
-              <span className="text-gray-300"> 邀请你一起迷宫淘金</span>
+              <span className="text-indigo-600 font-bold">{pendingOwnerName}</span>
+              <span className="text-gray-600"> 邀请你一起迷宫淘金</span>
             </div>
           )}
-          <h3 className="text-lg font-bold text-white mb-4">输入昵称加入房间</h3>
+          <h3 className="text-lg font-bold text-gray-700 mb-4">输入昵称加入房间</h3>
           {pendingError && (
-            <div className="bg-red-900/40 text-red-400 px-4 py-2 rounded-lg mb-4 text-sm">
+            <div className="bg-red-50 text-red-600 px-4 py-2 rounded-lg mb-4 text-sm">
               {pendingError}
             </div>
           )}
           <input
-            className="w-full px-4 py-3 bg-[#0a0a23] border border-[#4cc9f0]/30 rounded-lg focus:ring-2 focus:ring-[#4cc9f0] focus:border-transparent outline-none transition mb-4 text-white placeholder-gray-500"
+            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition mb-4"
             placeholder="你的昵称"
             maxLength={12}
             value={nicknameInput}
@@ -149,7 +149,7 @@ export default function App() {
             autoFocus
           />
           <button
-            className="w-full py-3 px-4 bg-[#4cc9f0] text-[#0a0a23] font-semibold rounded-lg hover:bg-[#4cc9f0]/80 transition disabled:opacity-50"
+            className="w-full py-3 px-4 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition disabled:opacity-50"
             disabled={!nicknameInput.trim() || !!pendingError}
             onClick={() => confirmPendingJoin(pendingCode, nicknameInput.trim())}
           >

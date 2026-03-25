@@ -63,7 +63,7 @@ export class MazeRoom extends DurableObject {
   private roomCode = "";
   private phase: GamePhase = "waiting";
   private ownerId = "";
-  private difficulty: Difficulty = "easy";
+  private difficulty: Difficulty = "medium";
   private timerMinutes: TimerMinutes = null;
   private maze: MazeResult | null = null;
   private positions: Map<string, { x: number; y: number }> = new Map();
@@ -166,6 +166,12 @@ export class MazeRoom extends DurableObject {
         break;
       case "playAgain":
         this.handlePlayAgain(ws);
+        break;
+      case "surrender":
+        this.handleSurrender(ws);
+        break;
+      case "transferOwner":
+        this.handleTransferOwner(ws);
         break;
       case "leave":
         this.handleLeave(ws);
@@ -560,12 +566,8 @@ export class MazeRoom extends DurableObject {
     const newX = currentPos.x + dx;
     const newY = currentPos.y + dy;
 
-    // 边界验证
+    // 边界验证 — 静默忽略
     if (newX < 0 || newX >= size || newY < 0 || newY >= size) {
-      this.sendTo(ws, {
-        type: "error",
-        message: "超出边界",
-      });
       return;
     }
 
@@ -646,6 +648,9 @@ export class MazeRoom extends DurableObject {
       case "disconnect":
         sysText = `对方断线，${winnerName} 获胜！`;
         break;
+      case "surrender":
+        sysText = `对方投降，${winnerName} 获胜！`;
+        break;
       default:
         sysText = "游戏结束。";
         break;
@@ -695,6 +700,64 @@ export class MazeRoom extends DurableObject {
     this.broadcast({ type: "chat", message: chatMsg });
   }
 
+  private handleSurrender(ws: WebSocket): void {
+    if (this.phase !== "playing") {
+      return;
+    }
+    const att = this.getAttachment(ws);
+    if (!att?.playerId) {
+      return;
+    }
+    // 投降者输，对手赢
+    const opponentId = Array.from(this.players.keys()).find((id) => id !== att.playerId);
+    this.handleGameEnd("surrender", opponentId);
+  }
+
+  private handleTransferOwner(ws: WebSocket): void {
+    const att = this.getAttachment(ws);
+    if (!att?.playerId || att.playerId !== this.ownerId) {
+      return;
+    }
+    if (this.phase === "playing") {
+      return;
+    }
+    if (this.players.size < 2) {
+      return;
+    }
+
+    // 找到对手
+    const opponentId = Array.from(this.players.keys()).find((id) => id !== this.ownerId);
+    if (!opponentId) {
+      return;
+    }
+
+    this.ownerId = opponentId;
+
+    // 重置准备状态
+    for (const player of this.players.values()) {
+      player.ready = false;
+    }
+
+    // 回到 readying
+    this.phase = "readying";
+    this.maze = null;
+    this.positions.clear();
+    this.explored.clear();
+    this.assignments.clear();
+    this.winnerId = null;
+    this.gameStartsAt = 0;
+
+    this.broadcast({
+      type: "phaseChange",
+      phase: "readying",
+      ownerId: this.ownerId,
+    });
+
+    const newOwner = this.players.get(this.ownerId);
+    const sysMsg = this.addSystemMessage(`${newOwner?.name ?? "对方"} 成为了新房主`);
+    this.broadcast({ type: "chat", message: sysMsg });
+  }
+
   private handlePlayAgain(ws: WebSocket): void {
     const att = this.getAttachment(ws);
     if (!att?.playerId) {
@@ -739,18 +802,24 @@ export class MazeRoom extends DurableObject {
       return;
     }
 
+    // 主动离开 → 立即移除玩家，不走 grace period
+    // 先清掉 grace timeout（如果有）
     const player = this.players.get(att.playerId);
     if (player) {
-      player.online = false;
-      player.ws = null;
+      player.graceTimeout = undefined;
     }
 
-    this.startGracePeriod(att.playerId, GRACE_PERIOD);
+    this.handlePlayerRemoved(att.playerId);
 
     try {
       ws.close(1000, "Left");
     } catch {
       /* ignore */
+    }
+
+    // 所有人都走了 → 广播房间关闭
+    if (this.players.size === 0) {
+      this.broadcast({ type: "roomClosed", reason: "所有玩家已离开" });
     }
   }
 
@@ -762,17 +831,19 @@ export class MazeRoom extends DurableObject {
 
   private handleDisconnect(playerId: string): void {
     const player = this.players.get(playerId);
-    if (player) {
-      player.online = false;
-      player.ws = null;
+    if (!player) {
+      return;
     }
+    player.online = false;
+    player.ws = null;
 
     this.startGracePeriod(playerId, GRACE_PERIOD);
 
-    // 广播下线
+    // 通知对方该玩家离线了（更新 online 状态）
     this.broadcast({
-      type: "playerOffline",
+      type: "readyChanged",
       playerId,
+      ready: player.ready,
     });
   }
 
@@ -869,15 +940,18 @@ export class MazeRoom extends DurableObject {
 
     const now = Date.now();
 
-    // 检查 grace period 过期
+    // 检查 grace period 过期（先收集再处理，避免遍历中删除）
+    const toRemove: string[] = [];
     for (const [id, player] of this.players) {
       if (player.graceTimeout && now >= player.graceTimeout) {
         player.graceTimeout = undefined;
-        // 确认玩家确实仍然离线
         if (!player.online) {
-          this.handlePlayerRemoved(id);
+          toRemove.push(id);
         }
       }
+    }
+    for (const id of toRemove) {
+      this.handlePlayerRemoved(id);
     }
 
     // 检查游戏定时器过期
@@ -978,13 +1052,6 @@ export class MazeRoom extends DurableObject {
           : undefined,
       chatHistory: this.chatHistory,
     };
-  }
-
-  private buildAssignments(): Record<string, number> | undefined {
-    if (this.assignments.size === 0) {
-      return undefined;
-    }
-    return Object.fromEntries(this.assignments);
   }
 
   /* ── WebSocket Attachment 工具 ── */

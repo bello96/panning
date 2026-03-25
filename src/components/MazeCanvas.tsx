@@ -1,37 +1,93 @@
 import { useRef, useEffect, useState } from "react";
 import { type MazeData, type Position, type Difficulty, WALL_TOP, WALL_RIGHT, WALL_BOTTOM, WALL_LEFT } from "../types/protocol";
-import { getVisibleCells } from "../utils/maze";
+
+export interface PlayerRender {
+  id: string;
+  position: Position;
+  color: string;
+  label: string; // 用户名首字符
+}
 
 interface MazeCanvasProps {
   maze: MazeData;
-  myPosition: Position;
-  opponentPosition: Position | null;
-  myId: string;
-  opponentId: string | null;
+  players: PlayerRender[];
   difficulty: Difficulty;
-  explored?: Record<string, boolean[][]>;
+}
+
+const LERP_MS = 120;
+
+interface LerpState {
+  fromX: number; fromY: number;
+  toX: number; toY: number;
+  start: number;
+}
+
+function lerpPos(s: LerpState, now: number) {
+  if (s.start === 0) {
+    return { x: s.toX, y: s.toY };
+  }
+  const t = Math.min((now - s.start) / LERP_MS, 1);
+  const e = 1 - (1 - t) * (1 - t);
+  return {
+    x: s.fromX + (s.toX - s.fromX) * e,
+    y: s.fromY + (s.toY - s.fromY) * e,
+  };
 }
 
 export default function MazeCanvas({
   maze,
-  myPosition,
-  opponentPosition,
-  myId,
-  opponentId: _opponentId,
+  players: playerRenders,
   difficulty,
-  explored,
 }: MazeCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [canvasSize, setCanvasSize] = useState(400);
   const animRef = useRef<number>(0);
 
-  // ResizeObserver — keep canvas square and fill container
+  // Load gold image
+  const goldImgRef = useRef<HTMLImageElement | null>(null);
+  if (!goldImgRef.current) {
+    const img = new Image();
+    img.src = new URL("../imgs/bullion.png", import.meta.url).href;
+    goldImgRef.current = img;
+  }
+
+  // Per-player lerp states
+  const lerpsRef = useRef<Map<string, LerpState>>(new Map());
+  const prevPositions = useRef<Map<string, Position>>(new Map());
+
+  // Update lerps when player positions change
+  for (const pr of playerRenders) {
+    const prev = prevPositions.current.get(pr.id);
+    if (!prev || prev.x !== pr.position.x || prev.y !== pr.position.y) {
+      const now = performance.now();
+      const existing = lerpsRef.current.get(pr.id);
+      if (existing) {
+        const cur = lerpPos(existing, now);
+        lerpsRef.current.set(pr.id, {
+          fromX: cur.x, fromY: cur.y,
+          toX: pr.position.x, toY: pr.position.y,
+          start: now,
+        });
+      } else {
+        lerpsRef.current.set(pr.id, {
+          fromX: pr.position.x, fromY: pr.position.y,
+          toX: pr.position.x, toY: pr.position.y,
+          start: 0,
+        });
+      }
+      prevPositions.current.set(pr.id, pr.position);
+    }
+  }
+
+  // Refs for render loop
+  const mazeRef = useRef(maze); mazeRef.current = maze;
+  const diffRef = useRef(difficulty); diffRef.current = difficulty;
+  const playersRef = useRef(playerRenders); playersRef.current = playerRenders;
+
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) {
-      return;
-    }
+    if (!container) { return; }
     const ro = new ResizeObserver((entries) => {
       const { width, height } = entries[0].contentRect;
       setCanvasSize(Math.min(width, height));
@@ -40,159 +96,168 @@ export default function MazeCanvas({
     return () => ro.disconnect();
   }, []);
 
-  // Animation + rendering loop
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) {
-      return;
-    }
+    if (!canvas) { return; }
     const ctx = canvas.getContext("2d")!;
     const dpr = window.devicePixelRatio || 1;
     canvas.width = canvasSize * dpr;
     canvas.height = canvasSize * dpr;
     ctx.scale(dpr, dpr);
 
-    const cellSize = canvasSize / maze.size;
-
-    function drawPlayer(pos: Position, color: string, label: string) {
-      const px = pos.x * cellSize + cellSize / 2;
-      const py = pos.y * cellSize + cellSize / 2;
-      const r = cellSize * 0.35;
+    function drawPlayer(x: number, y: number, color: string, label: string) {
+      const cs = canvasSize / mazeRef.current.size;
+      const px = x * cs + cs / 2;
+      const py = y * cs + cs / 2;
+      const r = cs * 0.35;
       ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc(px, py, r, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#fff";
-      ctx.font = `bold ${cellSize * 0.35}px sans-serif`;
+      ctx.font = `bold ${cs * 0.4}px sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(label, px, py);
     }
 
     const render = (time: number) => {
-      const animationTime = time / 1000;
+      const m = mazeRef.current;
+      const diff = diffRef.current;
 
-      // 1. Clear canvas
-      ctx.fillStyle = "#0a0a23";
+      const prs = playersRef.current;
+      const cs = canvasSize / m.size;
+
+      // 1. Background
+      ctx.fillStyle = "#f0f2f8";
       ctx.fillRect(0, 0, canvasSize, canvasSize);
 
-      // 2. Draw path cells
-      ctx.fillStyle = "#111";
-      for (let y = 0; y < maze.size; y++) {
-        for (let x = 0; x < maze.size; x++) {
-          ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+      // 2. Path cells
+      ctx.fillStyle = "#ffffff";
+      for (let y = 0; y < m.size; y++) {
+        for (let x = 0; x < m.size; x++) {
+          ctx.fillRect(x * cs, y * cs, cs, cs);
         }
       }
 
-      // 3. Draw walls
-      ctx.strokeStyle = "#3a506b";
-      ctx.lineWidth =
-        difficulty === "easy" ? 3 : difficulty === "medium" ? 2 : 1.5;
-
-      for (let y = 0; y < maze.size; y++) {
-        for (let x = 0; x < maze.size; x++) {
-          const cell = maze.cells[y][x];
-          const cx = x * cellSize;
-          const cy = y * cellSize;
-
+      // 3. Walls
+      ctx.strokeStyle = "#8b95a8";
+      ctx.lineWidth = diff === "easy" ? 3 : diff === "medium" ? 2 : 1.5;
+      for (let y = 0; y < m.size; y++) {
+        for (let x = 0; x < m.size; x++) {
+          const cell = m.cells[y][x];
+          const cx = x * cs, cy = y * cs;
           ctx.beginPath();
-          if (cell & WALL_TOP) {
-            ctx.moveTo(cx, cy);
-            ctx.lineTo(cx + cellSize, cy);
-          }
-          if (cell & WALL_RIGHT) {
-            ctx.moveTo(cx + cellSize, cy);
-            ctx.lineTo(cx + cellSize, cy + cellSize);
-          }
-          if (cell & WALL_BOTTOM) {
-            ctx.moveTo(cx, cy + cellSize);
-            ctx.lineTo(cx + cellSize, cy + cellSize);
-          }
-          if (cell & WALL_LEFT) {
-            ctx.moveTo(cx, cy);
-            ctx.lineTo(cx, cy + cellSize);
-          }
+          if (cell & WALL_TOP) { ctx.moveTo(cx, cy); ctx.lineTo(cx + cs, cy); }
+          if (cell & WALL_RIGHT) { ctx.moveTo(cx + cs, cy); ctx.lineTo(cx + cs, cy + cs); }
+          if (cell & WALL_BOTTOM) { ctx.moveTo(cx, cy + cs); ctx.lineTo(cx + cs, cy + cs); }
+          if (cell & WALL_LEFT) { ctx.moveTo(cx, cy); ctx.lineTo(cx, cy + cs); }
           ctx.stroke();
         }
       }
 
-      // 4. Draw entrance markers
-      ctx.fillStyle = "rgba(76, 201, 240, 0.15)";
-      for (const entrance of maze.entrances) {
-        ctx.fillRect(
-          entrance.x * cellSize,
-          entrance.y * cellSize,
-          cellSize,
-          cellSize
-        );
-      }
+      // 3.5 Outer border — thick wall around maze, with entrance gaps
+      const borderW = diff === "easy" ? 5 : diff === "medium" ? 4 : 3;
+      ctx.strokeStyle = "#4b5563";
+      ctx.lineWidth = borderW;
+      const totalSize = m.size * cs;
+      const [ent0, ent1] = m.entrances;
 
-      // 5. Draw gold — pulsing golden circle
-      const goldX = maze.gold.x * cellSize + cellSize / 2;
-      const goldY = maze.gold.y * cellSize + cellSize / 2;
-      const pulse = 0.8 + 0.2 * Math.sin(animationTime * 3);
-      const goldRadius = cellSize * 0.3 * pulse;
-
-      ctx.shadowColor = "#ffd700";
-      ctx.shadowBlur = cellSize * 0.4;
-      ctx.fillStyle = "#ffd700";
-      ctx.beginPath();
-      ctx.arc(goldX, goldY, goldRadius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-
-      // 6. Draw players
-      drawPlayer(myPosition, "#4cc9f0", "A");
-      if (opponentPosition) {
-        drawPlayer(opponentPosition, "#f72585", "B");
-      }
-
-      // 7. Draw fog overlay (hard mode only)
-      if (difficulty === "hard" && explored) {
-        ctx.save();
-
-        // Semi-transparent black over entire canvas
-        ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
-        ctx.fillRect(0, 0, canvasSize, canvasSize);
-
-        // Cut out explored/visible areas
-        ctx.globalCompositeOperation = "destination-out";
-
-        const myExplored = explored[myId];
-        if (myExplored) {
-          for (let y = 0; y < maze.size; y++) {
-            for (let x = 0; x < maze.size; x++) {
-              if (myExplored[y]?.[x]) {
-                // Previously explored: partially visible
-                ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-                ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
-              }
-            }
+      // Helper: draw border edge, skipping entrance cell
+      function drawBorderEdge(
+        x1: number, y1: number, x2: number, y2: number,
+        isHorizontal: boolean, entrances: Position[],
+      ) {
+        // Collect entrance gaps on this edge
+        const gaps: { start: number; end: number }[] = [];
+        for (const ent of entrances) {
+          if (isHorizontal && ((y1 === 0 && ent.y === 0) || (y1 === totalSize && ent.y === m.size - 1))) {
+            gaps.push({ start: ent.x * cs, end: (ent.x + 1) * cs });
+          }
+          if (!isHorizontal && ((x1 === 0 && ent.x === 0) || (x1 === totalSize && ent.x === m.size - 1))) {
+            gaps.push({ start: ent.y * cs, end: (ent.y + 1) * cs });
           }
         }
 
-        // Current visible area: fully clear
-        const visible = getVisibleCells(
-          myPosition.x,
-          myPosition.y,
-          maze.size,
-          3
-        );
-        ctx.fillStyle = "rgba(0, 0, 0, 1.0)";
-        for (const key of visible) {
-          const [vx, vy] = key.split(",").map(Number);
-          ctx.fillRect(vx * cellSize, vy * cellSize, cellSize, cellSize);
+        if (gaps.length === 0) {
+          ctx.beginPath();
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x2, y2);
+          ctx.stroke();
+          return;
         }
 
-        ctx.restore();
+        // Sort gaps and draw segments between them
+        gaps.sort((a, b) => a.start - b.start);
+        const coord = isHorizontal ? y1 : x1;
+        let pos = isHorizontal ? x1 : y1;
+        const end = isHorizontal ? x2 : y2;
+
+        for (const gap of gaps) {
+          if (pos < gap.start) {
+            ctx.beginPath();
+            if (isHorizontal) { ctx.moveTo(pos, coord); ctx.lineTo(gap.start, coord); }
+            else { ctx.moveTo(coord, pos); ctx.lineTo(coord, gap.start); }
+            ctx.stroke();
+          }
+          pos = gap.end;
+        }
+        if (pos < end) {
+          ctx.beginPath();
+          if (isHorizontal) { ctx.moveTo(pos, coord); ctx.lineTo(end, coord); }
+          else { ctx.moveTo(coord, pos); ctx.lineTo(coord, end); }
+          ctx.stroke();
+        }
       }
+
+      const ents = [ent0, ent1];
+      drawBorderEdge(0, 0, totalSize, 0, true, ents);           // top
+      drawBorderEdge(0, totalSize, totalSize, totalSize, true, ents); // bottom
+      drawBorderEdge(0, 0, 0, totalSize, false, ents);           // left
+      drawBorderEdge(totalSize, 0, totalSize, totalSize, false, ents); // right
+
+      // 4. Entrance markers
+      ctx.fillStyle = "rgba(99, 102, 241, 0.15)";
+      for (const e of m.entrances) {
+        ctx.fillRect(e.x * cs, e.y * cs, cs, cs);
+      }
+
+      // 5. Gold — bullion image with pulse
+      const goldImg = goldImgRef.current;
+      const pulse = 0.85 + 0.15 * Math.sin(time / 1000 * 3);
+      const goldSize = cs * 0.8 * pulse;
+      const gx = m.gold.x * cs + (cs - goldSize) / 2;
+      const gy = m.gold.y * cs + (cs - goldSize) / 2;
+      if (goldImg && goldImg.complete && goldImg.naturalWidth > 0) {
+        ctx.drawImage(goldImg, gx, gy, goldSize, goldSize);
+      } else {
+        // Fallback circle if image not loaded
+        ctx.fillStyle = "#ffd700";
+        ctx.beginPath();
+        ctx.arc(m.gold.x * cs + cs / 2, m.gold.y * cs + cs / 2, cs * 0.3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // 6. Players — smooth lerp, consistent colors for both sides
+      const now = performance.now();
+      for (const pr of prs) {
+        const ls = lerpsRef.current.get(pr.id);
+        if (ls) {
+          const p = lerpPos(ls, now);
+          drawPlayer(p.x, p.y, pr.color, pr.label);
+        } else {
+          drawPlayer(pr.position.x, pr.position.y, pr.color, pr.label);
+        }
+      }
+
+
 
       animRef.current = requestAnimationFrame(render);
     };
 
     animRef.current = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animRef.current);
-  }, [canvasSize, maze, myPosition, opponentPosition, difficulty, explored, myId]);
+  }, [canvasSize]);
 
   return (
     <div ref={containerRef} className="w-full h-full flex items-center justify-center">

@@ -80,7 +80,7 @@ export interface S_GameEnd {
   type: "gameEnd";
   winnerId: string | null;
   winnerName: string;
-  reason: "gold" | "timeout" | "disconnect";
+  reason: "gold" | "timeout" | "disconnect" | "surrender";
 }
 export interface S_DifficultyChanged { type: "difficultyChanged"; difficulty: Difficulty }
 export interface S_TimerChanged { type: "timerChanged"; timerMinutes: 3 | 5 | 10 | null }
@@ -104,10 +104,12 @@ export interface C_StartGame { type: "startGame" }
 export interface C_Move { type: "move"; direction: Direction }
 export interface C_Chat { type: "chat"; text: string }
 export interface C_PlayAgain { type: "playAgain" }
+export interface C_Surrender { type: "surrender" }
+export interface C_TransferOwner { type: "transferOwner" }
 export interface C_Leave { type: "leave" }
 export interface C_Ping { type: "ping" }
 
 export type ClientMessage =
   | C_Join | C_Ready | C_SetDifficulty | C_SetTimer
   | C_StartGame | C_Move | C_Chat | C_PlayAgain
-  | C_Leave | C_Ping;
+  | C_Surrender | C_TransferOwner | C_Leave | C_Ping;

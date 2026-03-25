@@ -74,7 +74,7 @@ export default function CountdownOverlay({ gameStartsAt, onDone }: CountdownOver
       style={{
         position: "fixed",
         inset: 0,
-        backgroundColor: "rgba(10, 10, 35, 0.75)",
+        backgroundColor: "rgba(239, 242, 255, 0.85)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -86,9 +86,9 @@ export default function CountdownOverlay({ gameStartsAt, onDone }: CountdownOver
         style={{
           fontSize: label === "GO!" ? "96px" : "128px",
           fontWeight: "900",
-          color: "#ffffff",
+          color: "#6366f1",
           textShadow:
-            "0 0 40px #6366f1, 0 0 80px #6366f1, 0 4px 20px rgba(0,0,0,0.8)",
+            "0 0 30px rgba(99,102,241,0.4), 0 2px 10px rgba(0,0,0,0.1)",
           animation: "countdown-pop 0.5s ease-out forwards",
           userSelect: "none",
         }}

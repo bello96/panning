@@ -1,10 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { getWsBase, getHttpBase } from "../api";
-import { hasWall, moveInDirection } from "../utils/maze";
-import MazeCanvas from "../components/MazeCanvas";
+import { hasWall } from "../utils/maze";
+import MazeCanvas, { type PlayerRender } from "../components/MazeCanvas";
 import PlayerBar from "../components/PlayerBar";
-import ChatPanel from "../components/ChatPanel";
 import CountdownOverlay from "../components/CountdownOverlay";
 import GameResultModal from "../components/GameResultModal";
 import Confetti from "../components/Confetti";
@@ -13,7 +12,6 @@ import type {
   Difficulty,
   Direction,
   PlayerInfo,
-  ChatMessage,
   MazeData,
   Position,
   S_GameStart,
@@ -32,8 +30,7 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
   const [players, setPlayers] = useState<PlayerInfo[]>([]);
   const [ownerId, setOwnerId] = useState("");
   const [phase, setPhase] = useState<GamePhase>("waiting");
-  const [difficulty, setDifficulty] = useState<Difficulty>("easy");
-  const [timerMinutes, setTimerMinutes] = useState<3 | 5 | 10 | null>(null);
+  const [difficulty, setDifficulty] = useState<Difficulty>("medium");
 
   /* ── Game state ── */
   const [maze, setMaze] = useState<MazeData | null>(null);
@@ -41,15 +38,14 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
   const [gameStartsAt, setGameStartsAt] = useState(0);
   const [winnerId, setWinnerId] = useState<string | null | undefined>(undefined);
   const [winnerName, setWinnerName] = useState("");
-  const [gameEndReason, setGameEndReason] = useState<"gold" | "timeout" | "disconnect">("gold");
-  const [explored, setExplored] = useState<Record<string, boolean[][]>>({});
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [gameEndReason, setGameEndReason] = useState<"gold" | "timeout" | "disconnect" | "surrender">("gold");
+  const [gameDuration, setGameDuration] = useState(0); // 用时（秒）
 
   /* ── UI state ── */
   const [showCountdown, setShowCountdown] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
-  const [chatFocused, setChatFocused] = useState(false);
-  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
+  const [showResult, setShowResult] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   /* ── WebSocket ── */
   const wsUrl = `${getWsBase()}/api/rooms/${roomCode}/ws`;
@@ -72,7 +68,6 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
           setOwnerId(msg.ownerId);
           setPhase(msg.phase);
           setDifficulty(msg.difficulty);
-          setTimerMinutes(msg.timerMinutes);
           if (msg.maze) {
             setMaze(msg.maze);
           }
@@ -88,14 +83,15 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
           if (msg.winnerId !== undefined) {
             setWinnerId(msg.winnerId);
           }
-          if (msg.explored) {
-            setExplored(msg.explored);
-          }
-          setChatMessages(msg.chatHistory);
           break;
         }
         case "playerJoined":
-          setPlayers((prev) => [...prev, msg.player]);
+          setPlayers((prev) => {
+            if (prev.some((p) => p.id === msg.player.id)) {
+              return prev.map((p) => p.id === msg.player.id ? msg.player : p);
+            }
+            return [...prev, msg.player];
+          });
           break;
         case "playerLeft":
           setPlayers((prev) => prev.filter((p) => p.id !== msg.playerId));
@@ -109,20 +105,21 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
             setGameStartsAt(0);
             setWinnerId(undefined);
             setWinnerName("");
-            setExplored({});
             setShowConfetti(false);
+            setShowResult(false);
+            setPlayers((prev) =>
+              prev.map((p) => ({ ...p, ready: false })),
+            );
           }
           break;
         case "gameStart": {
           setPhase("playing");
           setMaze(msg.maze);
           setGameStartsAt(msg.gameStartsAt);
-          // 服务端发送 positions 字段（直接包含玩家位置）
           const gameStartMsg = msg as S_GameStart & { positions?: Record<string, Position> };
           if (gameStartMsg.positions) {
             setPositions(gameStartMsg.positions);
           } else {
-            // fallback: 从 assignments + entrances 计算
             const initPositions: Record<string, Position> = {};
             for (const [pid, val] of Object.entries(msg.assignments)) {
               const idx = typeof val === "number" ? val : (val as { entrance: number }).entrance ?? 0;
@@ -134,9 +131,9 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
           break;
         }
         case "playerMoved":
-          setPositions((prev) => ({ ...prev, [msg.playerId]: msg.position }));
-          if (msg.explored) {
-            setExplored((prev) => ({ ...prev, [msg.playerId]: msg.explored! }));
+          // 本地玩家已经乐观更新了，只同步对方的位置
+          if (msg.playerId !== playerId) {
+            setPositions((prev) => ({ ...prev, [msg.playerId]: msg.position }));
           }
           break;
         case "gameEnd":
@@ -144,6 +141,11 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
           setWinnerName(msg.winnerName);
           setGameEndReason(msg.reason);
           setPhase("ended");
+          setShowResult(true);
+          // 用 ref 读取最新的 gameStartsAt，避免闭包陈旧值
+          if (gameStartsAtRef.current) {
+            setGameDuration(Math.floor((Date.now() - gameStartsAtRef.current) / 1000));
+          }
           if (msg.winnerId === myId) {
             setShowConfetti(true);
           }
@@ -151,18 +153,12 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
         case "difficultyChanged":
           setDifficulty(msg.difficulty);
           break;
-        case "timerChanged":
-          setTimerMinutes(msg.timerMinutes);
-          break;
         case "readyChanged":
           setPlayers((prev) =>
             prev.map((p) =>
               p.id === msg.playerId ? { ...p, ready: msg.ready } : p,
             ),
           );
-          break;
-        case "chat":
-          setChatMessages((prev) => [...prev, msg.message]);
           break;
         case "roomClosed":
           leave();
@@ -175,7 +171,7 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
     });
   }, [addListener, myId, leave, onLeave]);
 
-  /* ── Refs for keyboard handler (avoid re-bindng on every position change) ── */
+  /* ── Refs for keyboard handler ── */
   const positionsRef = useRef(positions);
   positionsRef.current = positions;
   const mazeRef = useRef(maze);
@@ -185,14 +181,14 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
   const myIdRef = useRef(myId);
   myIdRef.current = myId;
 
-  /* ── Effect: Keyboard movement handler ── */
+  /* ── Effect: Keyboard movement handler (cell-to-cell) ── */
   useEffect(() => {
-    if (phase !== "playing" || chatFocused) {
+    if (phase !== "playing") {
       return;
     }
 
     let lastMoveTime = 0;
-    const MOVE_INTERVAL = 80;
+    const MOVE_INTERVAL = 100;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       const dirMap: Record<string, Direction> = {
@@ -217,7 +213,8 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
       if (!myPos) {
         return;
       }
-      const cell = mazeRef.current.cells[myPos.y]?.[myPos.x];
+      const m = mazeRef.current;
+      const cell = m.cells[myPos.y]?.[myPos.x];
       if (cell === undefined) {
         return;
       }
@@ -225,29 +222,37 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
         return;
       }
 
-      // Optimistic update
-      const newPos = moveInDirection(myPos, direction);
+      let nx = myPos.x, ny = myPos.y;
+      if (direction === "up") { ny -= 1; }
+      if (direction === "down") { ny += 1; }
+      if (direction === "left") { nx -= 1; }
+      if (direction === "right") { nx += 1; }
+      if (nx < 0 || nx >= m.size || ny < 0 || ny >= m.size) {
+        return;
+      }
+
+      const newPos = { x: nx, y: ny };
       setPositions((prev) => ({ ...prev, [myIdRef.current]: newPos }));
       send({ type: "move", direction });
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [phase, chatFocused, send]);
+  }, [phase, send]);
 
-  /* ── Effect: Timer countdown ── */
+  /* ── Effect: Elapsed timer ── */
   useEffect(() => {
-    if (phase !== "playing" || !timerMinutes || !gameStartsAt) {
-      setRemainingSeconds(null);
+    if (phase !== "playing" || !gameStartsAt) {
       return;
     }
-    const endTime = gameStartsAt + timerMinutes * 60 * 1000;
     const interval = setInterval(() => {
-      const remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
-      setRemainingSeconds(remaining);
-    }, 1000);
+      const now = Date.now();
+      if (now >= gameStartsAt) {
+        setElapsedSeconds(Math.floor((now - gameStartsAt) / 1000));
+      }
+    }, 500);
     return () => clearInterval(interval);
-  }, [phase, timerMinutes, gameStartsAt]);
+  }, [phase, gameStartsAt]);
 
   /* ── Effect: sendBeacon on unload ── */
   useEffect(() => {
@@ -265,7 +270,17 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
   const isOwner = myId === ownerId;
   const opponent = players.find((p) => p.id !== myId);
   const myPosition = positions[myId];
-  const opponentPosition = opponent ? positions[opponent.id] : null;
+
+  // 按玩家列表顺序分配固定颜色，双方看到的颜色一致
+  const PLAYER_COLORS = ["#6366f1", "#ec4899"];
+  const mazePlayerRenders: PlayerRender[] = players
+    .map((p, i) => ({
+      id: p.id,
+      position: positions[p.id] ?? { x: 0, y: 0 },
+      color: PLAYER_COLORS[i] ?? PLAYER_COLORS[0],
+      label: p.name.charAt(0),
+    }))
+    .filter((p) => positions[p.id] !== undefined);
 
   const handleLeave = () => {
     leave();
@@ -277,181 +292,150 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
       {/* Top bar */}
       <PlayerBar
         roomCode={roomCode}
-        difficulty={difficulty}
-        timerMinutes={timerMinutes}
-        remainingSeconds={remainingSeconds}
         phase={phase}
         players={players}
         ownerId={ownerId}
         myId={myId}
         onLeave={handleLeave}
+        onTransferOwner={() => send({ type: "transferOwner" })}
       />
 
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left: Game area */}
-        <div className="flex-1 flex flex-col p-4 min-w-0">
-          {/* Player info cards */}
-          <div className="flex gap-4 mb-4">
-            {players.map((p) => (
-              <div
-                key={p.id}
-                className={`flex-1 px-4 py-2 rounded-lg bg-white shadow-sm ${
-                  p.id === myId
-                    ? "border-2 border-indigo-400"
-                    : "border-2 border-pink-400"
-                }`}
-              >
-                <div
-                  className={`font-bold ${
-                    p.id === myId ? "text-indigo-600" : "text-pink-500"
-                  }`}
-                >
-                  {p.id === myId ? "\u{1F535}" : "\u{1F534}"} {p.name}{" "}
-                  {p.id === myId ? "(你)" : ""}
-                </div>
-                <div className="text-xs text-gray-400">
-                  {!p.online
-                    ? "离线"
-                    : phase === "readying"
-                      ? p.ready
-                        ? "已准备"
-                        : "未准备"
-                      : "在线"}
-                </div>
-              </div>
-            ))}
-            {players.length < 2 && (
-              <div className="flex-1 px-4 py-2 rounded-lg bg-white shadow-sm border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400">
-                等待对手加入...
-              </div>
-            )}
-          </div>
-
-          {/* Maze canvas or waiting message */}
-          <div className="flex-1 relative bg-white rounded-lg shadow-sm overflow-hidden">
-            {maze && myPosition ? (
-              <MazeCanvas
-                maze={maze}
-                myPosition={myPosition}
-                opponentPosition={opponentPosition ?? null}
-                myId={myId}
-                opponentId={opponent?.id ?? null}
-                difficulty={difficulty}
-                explored={difficulty === "hard" ? explored : undefined}
-              />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-gray-400">
-                {phase === "waiting"
-                  ? "等待对手加入后开始游戏"
+      <div className="flex-1 flex flex-col p-4 overflow-hidden">
+        {/* Player cards + controls in one row */}
+        <div className="flex items-center gap-3 mb-3">
+          {/* Player tags — color by list order (same as maze) */}
+          {players.map((p, i) => {
+            const borderCls = i === 0 ? "border border-indigo-400" : "border border-pink-400";
+            const textCls = i === 0 ? "text-indigo-600" : "text-pink-500";
+            return (
+            <div
+              key={p.id}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white shadow-sm text-sm ${borderCls}`}
+            >
+              <span className={`font-bold ${textCls}`}>
+                {p.name}
+              </span>
+              <span className="text-xs text-gray-400">
+                {p.id === myId ? "(你)" : ""}
+                {!p.online
+                  ? " 离线"
                   : phase === "readying"
-                    ? "准备就绪后开始游戏"
-                    : "加载中..."}
-              </div>
-            )}
-            {showCountdown && (
-              <CountdownOverlay
-                gameStartsAt={gameStartsAt}
-                onDone={() => setShowCountdown(false)}
-              />
-            )}
-          </div>
+                    ? p.id === ownerId
+                      ? ""
+                      : p.ready ? " 已准备" : " 未准备"
+                    : ""}
+              </span>
+            </div>
+            );
+          })}
+          {players.length < 2 && (
+            <div className="flex items-center px-3 py-1.5 rounded-lg bg-white shadow-sm border border-dashed border-gray-300 text-sm text-gray-400">
+              等待对手...
+            </div>
+          )}
 
-          {/* Action buttons */}
-          <div className="mt-4 flex gap-4 justify-center items-center flex-wrap">
-            {phase === "readying" && isOwner && (
-              <>
-                {/* Difficulty selector */}
-                <select
-                  value={difficulty}
-                  onChange={(e) =>
-                    send({
-                      type: "setDifficulty",
-                      difficulty: e.target.value as Difficulty,
-                    })
-                  }
-                  className="px-3 py-2 rounded-lg bg-white border border-gray-300 text-gray-700 focus:ring-2 focus:ring-indigo-400 outline-none"
-                >
-                  <option value="easy">简单</option>
-                  <option value="medium">中等</option>
-                  <option value="hard">困难</option>
-                </select>
-
-                {/* Timer selector */}
-                <select
-                  value={timerMinutes ?? ""}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    send({
-                      type: "setTimer",
-                      minutes: v ? (Number(v) as 3 | 5 | 10) : null,
-                    });
-                  }}
-                  className="px-3 py-2 rounded-lg bg-white border border-gray-300 text-gray-700 focus:ring-2 focus:ring-indigo-400 outline-none"
-                >
-                  <option value="">无限时</option>
-                  <option value="3">3 分钟</option>
-                  <option value="5">5 分钟</option>
-                  <option value="10">10 分钟</option>
-                </select>
-
-                {/* Start button */}
-                <button
-                  onClick={() => send({ type: "startGame" })}
-                  disabled={!opponent?.ready}
-                  className="px-6 py-2 rounded-lg bg-indigo-600 text-white font-bold hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
-                >
-                  开始游戏
-                </button>
-              </>
-            )}
-            {phase === "readying" && !isOwner && (
-              <button
-                onClick={() => send({ type: "ready" })}
-                className={`px-6 py-2 rounded-lg font-bold transition ${
-                  players.find((p) => p.id === myId)?.ready
-                    ? "bg-green-500 text-white hover:bg-green-600"
-                    : "bg-indigo-600 text-white hover:bg-indigo-700"
-                }`}
-              >
-                {players.find((p) => p.id === myId)?.ready
-                  ? "已准备 \u2713"
-                  : "准备"}
-              </button>
-            )}
-            {phase === "waiting" && (
+          {/* Playing: elapsed timer + surrender */}
+          {phase === "playing" && (
+            <>
+              <span className="text-sm font-mono text-gray-500 ml-2">
+                {String(Math.floor(elapsedSeconds / 60)).padStart(2, "0")}:{String(elapsedSeconds % 60).padStart(2, "0")}
+              </span>
               <button
                 onClick={() => {
-                  navigator.clipboard.writeText(
-                    `${window.location.origin}/${roomCode}`,
-                  );
+                  if (window.confirm("确定投降吗？")) {
+                    send({ type: "surrender" });
+                  }
                 }}
-                className="px-6 py-2 rounded-lg bg-white border border-indigo-500 text-indigo-600 hover:bg-indigo-50 transition font-medium"
+                className="text-xs px-2 py-1 rounded-lg bg-red-50 text-red-500 border border-red-200 hover:bg-red-100 transition"
               >
-                复制邀请链接
+                投降
               </button>
-            )}
-          </div>
+            </>
+          )}
+
+          {/* Spacer */}
+          <div className="flex-1" />
+
+          {/* Readying controls — right side */}
+          {phase === "readying" && isOwner && (
+            <>
+              <select
+                value={difficulty}
+                onChange={(e) =>
+                  send({
+                    type: "setDifficulty",
+                    difficulty: e.target.value as Difficulty,
+                  })
+                }
+                className="px-2 py-1.5 rounded-lg bg-white border border-gray-300 text-gray-700 text-sm focus:ring-2 focus:ring-indigo-400 outline-none"
+              >
+                <option value="easy">简单</option>
+                <option value="medium">中等</option>
+                <option value="hard">困难</option>
+              </select>
+              <button
+                onClick={() => send({ type: "startGame" })}
+                disabled={!opponent?.ready}
+                className="px-4 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              >
+                开始游戏
+              </button>
+            </>
+          )}
+          {phase === "readying" && !isOwner && (
+            <button
+              onClick={() => send({ type: "ready" })}
+              className={`px-4 py-1.5 rounded-lg text-sm font-bold transition ${
+                players.find((p) => p.id === myId)?.ready
+                  ? "bg-green-500 text-white hover:bg-green-600"
+                  : "bg-indigo-600 text-white hover:bg-indigo-700"
+              }`}
+            >
+              {players.find((p) => p.id === myId)?.ready
+                ? "已准备 \u2713"
+                : "准备"}
+            </button>
+          )}
         </div>
 
-        {/* Right: Chat panel */}
-        <ChatPanel
-          messages={chatMessages}
-          onSend={(text) => send({ type: "chat", text })}
-          onFocus={() => setChatFocused(true)}
-          onBlur={() => setChatFocused(false)}
-        />
+        {/* Maze canvas or waiting message */}
+        <div className="flex-1 relative bg-white rounded-lg shadow-sm overflow-hidden p-2">
+          {maze && myPosition ? (
+            <MazeCanvas
+              maze={maze}
+              players={mazePlayerRenders}
+              difficulty={difficulty}
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-gray-400">
+              {phase === "waiting"
+                ? "等待对手加入后开始游戏"
+                : phase === "readying"
+                  ? "准备就绪后开始游戏"
+                  : "加载中..."}
+            </div>
+          )}
+          {showCountdown && (
+            <CountdownOverlay
+              gameStartsAt={gameStartsAt}
+              onDone={() => setShowCountdown(false)}
+            />
+          )}
+        </div>
       </div>
 
       {/* Game result modal */}
-      {phase === "ended" && winnerId !== undefined && (
+      {showResult && phase === "ended" && winnerId !== undefined && (
         <GameResultModal
           winnerId={winnerId}
           winnerName={winnerName}
           myId={myId}
           reason={gameEndReason}
           isOwner={isOwner}
+          gameDuration={gameDuration}
           onPlayAgain={() => send({ type: "playAgain" })}
           onLeave={handleLeave}
+          onClose={() => setShowResult(false)}
         />
       )}
       <Confetti show={showConfetti} />

@@ -2,15 +2,18 @@ interface GameResultModalProps {
   winnerId: string | null;
   winnerName: string;
   myId: string;
-  reason: "gold" | "timeout" | "disconnect";
+  reason: "gold" | "timeout" | "disconnect" | "surrender";
   isOwner: boolean;
+  gameDuration: number; // 秒
   onPlayAgain: () => void;
   onLeave: () => void;
+  onClose: () => void;
 }
 
-function reasonText(reason: "gold" | "timeout" | "disconnect"): string {
+function reasonText(reason: string): string {
   if (reason === "gold") { return "找到金子"; }
   if (reason === "timeout") { return "时间到"; }
+  if (reason === "surrender") { return "投降"; }
   return "对手断线";
 }
 
@@ -22,6 +25,8 @@ export default function GameResultModal({
   isOwner,
   onPlayAgain,
   onLeave,
+  onClose,
+  gameDuration,
 }: GameResultModalProps) {
   const isDraw = winnerId === null;
   const isWinner = !isDraw && winnerId === myId;
@@ -43,6 +48,7 @@ export default function GameResultModal({
     >
       <div
         style={{
+          position: "relative",
           backgroundColor: "#ffffff",
           borderRadius: "16px",
           padding: "40px 48px",
@@ -55,6 +61,32 @@ export default function GameResultModal({
           textAlign: "center",
         }}
       >
+        {/* 关闭按钮 */}
+        <button
+          onClick={onClose}
+          style={{
+            position: "absolute",
+            top: "12px",
+            right: "12px",
+            width: "28px",
+            height: "28px",
+            borderRadius: "50%",
+            border: "none",
+            backgroundColor: "#f3f4f6",
+            color: "#6b7280",
+            fontSize: "16px",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            lineHeight: 1,
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#e5e7eb")}
+          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#f3f4f6")}
+        >
+          &times;
+        </button>
+
         {/* 结果标题 */}
         <div
           style={{
@@ -67,9 +99,12 @@ export default function GameResultModal({
           {resultText}
         </div>
 
-        {/* 原因 */}
+        {/* 原因 + 用时 */}
         <div style={{ color: "#6b7280", fontSize: "16px" }}>
           {reasonText(reason)}
+        </div>
+        <div style={{ color: "#9ca3af", fontSize: "13px" }}>
+          用时 {String(Math.floor(gameDuration / 60)).padStart(2, "0")}:{String(gameDuration % 60).padStart(2, "0")}
         </div>
 
         {/* 获胜者信息（非平局时显示） */}
