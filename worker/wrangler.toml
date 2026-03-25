@@ -1,0 +1,17 @@
+name = "panning-worker"
+main = "src/index.ts"
+compatibility_date = "2024-12-05"
+workers_dev = true
+
+routes = [
+  { pattern = "panning.dengjiabei.cn/api/*", zone_name = "dengjiabei.cn" }
+]
+
+[durable_objects]
+bindings = [
+  { name = "MAZE_ROOM", class_name = "MazeRoom" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MazeRoom"]
