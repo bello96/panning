@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { getWsBase, getHttpBase } from "../api";
 import { hasWall, moveInDirection } from "../utils/maze";
@@ -16,6 +16,7 @@ import type {
   ChatMessage,
   MazeData,
   Position,
+  S_GameStart,
 } from "../types/protocol";
 
 interface RoomProps {
@@ -113,13 +114,22 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
           }
           break;
         case "gameStart": {
+          setPhase("playing");
           setMaze(msg.maze);
           setGameStartsAt(msg.gameStartsAt);
-          const initPositions: Record<string, Position> = {};
-          for (const [pid, data] of Object.entries(msg.assignments)) {
-            initPositions[pid] = data.position;
+          // 服务端发送 positions 字段（直接包含玩家位置）
+          const gameStartMsg = msg as S_GameStart & { positions?: Record<string, Position> };
+          if (gameStartMsg.positions) {
+            setPositions(gameStartMsg.positions);
+          } else {
+            // fallback: 从 assignments + entrances 计算
+            const initPositions: Record<string, Position> = {};
+            for (const [pid, val] of Object.entries(msg.assignments)) {
+              const idx = typeof val === "number" ? val : (val as { entrance: number }).entrance ?? 0;
+              initPositions[pid] = msg.maze.entrances[idx] ?? { x: 0, y: 0 };
+            }
+            setPositions(initPositions);
           }
-          setPositions(initPositions);
           setShowCountdown(true);
           break;
         }
@@ -165,6 +175,16 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
     });
   }, [addListener, myId, leave, onLeave]);
 
+  /* ── Refs for keyboard handler (avoid re-bindng on every position change) ── */
+  const positionsRef = useRef(positions);
+  positionsRef.current = positions;
+  const mazeRef = useRef(maze);
+  mazeRef.current = maze;
+  const gameStartsAtRef = useRef(gameStartsAt);
+  gameStartsAtRef.current = gameStartsAt;
+  const myIdRef = useRef(myId);
+  myIdRef.current = myId;
+
   /* ── Effect: Keyboard movement handler ── */
   useEffect(() => {
     if (phase !== "playing" || chatFocused) {
@@ -182,7 +202,7 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
         ArrowRight: "right",
       };
       const direction = dirMap[e.key];
-      if (!direction || !maze || Date.now() < gameStartsAt) {
+      if (!direction || !mazeRef.current || Date.now() < gameStartsAtRef.current) {
         return;
       }
       e.preventDefault();
@@ -193,11 +213,11 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
       }
       lastMoveTime = now;
 
-      const myPos = positions[myId];
+      const myPos = positionsRef.current[myIdRef.current];
       if (!myPos) {
         return;
       }
-      const cell = maze.cells[myPos.y]?.[myPos.x];
+      const cell = mazeRef.current.cells[myPos.y]?.[myPos.x];
       if (cell === undefined) {
         return;
       }
@@ -207,13 +227,13 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
 
       // Optimistic update
       const newPos = moveInDirection(myPos, direction);
-      setPositions((prev) => ({ ...prev, [myId]: newPos }));
+      setPositions((prev) => ({ ...prev, [myIdRef.current]: newPos }));
       send({ type: "move", direction });
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [phase, chatFocused, gameStartsAt, positions, myId, maze, send]);
+  }, [phase, chatFocused, send]);
 
   /* ── Effect: Timer countdown ── */
   useEffect(() => {
@@ -247,8 +267,13 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
   const myPosition = positions[myId];
   const opponentPosition = opponent ? positions[opponent.id] : null;
 
+  const handleLeave = () => {
+    leave();
+    onLeave();
+  };
+
   return (
-    <div className="h-screen flex flex-col bg-[#1a1a2e] text-white overflow-hidden">
+    <div className="h-screen flex flex-col bg-[#eff2ff] overflow-hidden">
       {/* Top bar */}
       <PlayerBar
         roomCode={roomCode}
@@ -259,6 +284,7 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
         players={players}
         ownerId={ownerId}
         myId={myId}
+        onLeave={handleLeave}
       />
 
       <div className="flex-1 flex overflow-hidden">
@@ -269,15 +295,15 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
             {players.map((p) => (
               <div
                 key={p.id}
-                className={`flex-1 px-4 py-2 rounded-lg ${
+                className={`flex-1 px-4 py-2 rounded-lg bg-white shadow-sm ${
                   p.id === myId
-                    ? "bg-[#0f3460] border-2 border-[#4cc9f0]"
-                    : "bg-[#0f3460] border-2 border-[#f72585]"
+                    ? "border-2 border-indigo-400"
+                    : "border-2 border-pink-400"
                 }`}
               >
                 <div
                   className={`font-bold ${
-                    p.id === myId ? "text-[#4cc9f0]" : "text-[#f72585]"
+                    p.id === myId ? "text-indigo-600" : "text-pink-500"
                   }`}
                 >
                   {p.id === myId ? "\u{1F535}" : "\u{1F534}"} {p.name}{" "}
@@ -295,14 +321,14 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
               </div>
             ))}
             {players.length < 2 && (
-              <div className="flex-1 px-4 py-2 rounded-lg bg-[#0f3460] border-2 border-dashed border-gray-600 flex items-center justify-center text-gray-500">
+              <div className="flex-1 px-4 py-2 rounded-lg bg-white shadow-sm border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400">
                 等待对手加入...
               </div>
             )}
           </div>
 
           {/* Maze canvas or waiting message */}
-          <div className="flex-1 relative bg-[#0a0a23] rounded-lg overflow-hidden">
+          <div className="flex-1 relative bg-white rounded-lg shadow-sm overflow-hidden">
             {maze && myPosition ? (
               <MazeCanvas
                 maze={maze}
@@ -314,7 +340,7 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
                 explored={difficulty === "hard" ? explored : undefined}
               />
             ) : (
-              <div className="w-full h-full flex items-center justify-center text-gray-500">
+              <div className="w-full h-full flex items-center justify-center text-gray-400">
                 {phase === "waiting"
                   ? "等待对手加入后开始游戏"
                   : phase === "readying"
@@ -343,7 +369,7 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
                       difficulty: e.target.value as Difficulty,
                     })
                   }
-                  className="px-3 py-2 rounded-lg bg-[#16213e] border border-gray-600 text-white"
+                  className="px-3 py-2 rounded-lg bg-white border border-gray-300 text-gray-700 focus:ring-2 focus:ring-indigo-400 outline-none"
                 >
                   <option value="easy">简单</option>
                   <option value="medium">中等</option>
@@ -360,7 +386,7 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
                       minutes: v ? (Number(v) as 3 | 5 | 10) : null,
                     });
                   }}
-                  className="px-3 py-2 rounded-lg bg-[#16213e] border border-gray-600 text-white"
+                  className="px-3 py-2 rounded-lg bg-white border border-gray-300 text-gray-700 focus:ring-2 focus:ring-indigo-400 outline-none"
                 >
                   <option value="">无限时</option>
                   <option value="3">3 分钟</option>
@@ -372,7 +398,7 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
                 <button
                   onClick={() => send({ type: "startGame" })}
                   disabled={!opponent?.ready}
-                  className="px-6 py-2 rounded-lg bg-[#4cc9f0] text-black font-bold hover:bg-[#3ab8df] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                  className="px-6 py-2 rounded-lg bg-indigo-600 text-white font-bold hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
                 >
                   开始游戏
                 </button>
@@ -383,8 +409,8 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
                 onClick={() => send({ type: "ready" })}
                 className={`px-6 py-2 rounded-lg font-bold transition ${
                   players.find((p) => p.id === myId)?.ready
-                    ? "bg-green-600 text-white"
-                    : "bg-[#4cc9f0] text-black hover:bg-[#3ab8df]"
+                    ? "bg-green-500 text-white hover:bg-green-600"
+                    : "bg-indigo-600 text-white hover:bg-indigo-700"
                 }`}
               >
                 {players.find((p) => p.id === myId)?.ready
@@ -399,21 +425,11 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
                     `${window.location.origin}/${roomCode}`,
                   );
                 }}
-                className="px-6 py-2 rounded-lg bg-[#16213e] border border-[#4cc9f0] text-[#4cc9f0] hover:bg-[#4cc9f0] hover:text-black transition"
+                className="px-6 py-2 rounded-lg bg-white border border-indigo-500 text-indigo-600 hover:bg-indigo-50 transition font-medium"
               >
                 复制邀请链接
               </button>
             )}
-            {/* Leave button (always available) */}
-            <button
-              onClick={() => {
-                leave();
-                onLeave();
-              }}
-              className="px-4 py-2 rounded-lg bg-red-900/50 text-red-300 hover:bg-red-800 transition"
-            >
-              离开房间
-            </button>
           </div>
         </div>
 
@@ -435,10 +451,7 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
           reason={gameEndReason}
           isOwner={isOwner}
           onPlayAgain={() => send({ type: "playAgain" })}
-          onLeave={() => {
-            leave();
-            onLeave();
-          }}
+          onLeave={handleLeave}
         />
       )}
       <Confetti show={showConfetti} />

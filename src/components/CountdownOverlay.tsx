@@ -88,7 +88,7 @@ export default function CountdownOverlay({ gameStartsAt, onDone }: CountdownOver
           fontWeight: "900",
           color: "#ffffff",
           textShadow:
-            "0 0 40px #4cc9f0, 0 0 80px #4cc9f0, 0 4px 20px rgba(0,0,0,0.8)",
+            "0 0 40px #6366f1, 0 0 80px #6366f1, 0 4px 20px rgba(0,0,0,0.8)",
           animation: "countdown-pop 0.5s ease-out forwards",
           userSelect: "none",
         }}

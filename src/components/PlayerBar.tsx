@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { GamePhase, Difficulty } from "../types/protocol";
+import type { GamePhase, Difficulty, PlayerInfo } from "../types/protocol";
 
 interface PlayerBarProps {
   roomCode: string;
@@ -7,9 +7,10 @@ interface PlayerBarProps {
   timerMinutes: 3 | 5 | 10 | null;
   remainingSeconds: number | null;
   phase: GamePhase;
-  players: { id: string; name: string; online: boolean; ready: boolean }[];
+  players: PlayerInfo[];
   ownerId: string;
   myId: string;
+  onLeave: () => void;
 }
 
 function formatTime(seconds: number): string {
@@ -24,10 +25,10 @@ function difficultyLabel(d: Difficulty): string {
   return "困难";
 }
 
-function difficultyColor(d: Difficulty): string {
-  if (d === "easy") { return "#4ade80"; }
-  if (d === "medium") { return "#fbbf24"; }
-  return "#f87171";
+function difficultyBadgeClass(d: Difficulty): string {
+  if (d === "easy") { return "bg-green-100 text-green-700 border border-green-300"; }
+  if (d === "medium") { return "bg-amber-100 text-amber-700 border border-amber-300"; }
+  return "bg-red-100 text-red-700 border border-red-300";
 }
 
 export default function PlayerBar({
@@ -39,6 +40,7 @@ export default function PlayerBar({
   players,
   ownerId,
   myId,
+  onLeave,
 }: PlayerBarProps) {
   const [copied, setCopied] = useState(false);
 
@@ -54,108 +56,88 @@ export default function PlayerBar({
   const showTimer = phase === "playing" && remainingSeconds !== null;
 
   return (
-    <div
-      style={{ backgroundColor: "#1a1a2e", borderBottom: "1px solid #16213e" }}
-      className="flex items-center justify-between px-4 py-2 text-white"
-    >
-      {/* 左侧：房间码 + 复制按钮 */}
-      <div className="flex items-center gap-2">
-        <span style={{ color: "#4cc9f0" }} className="text-sm font-mono font-bold">
-          {roomCode}
+    <div className="bg-white shadow-sm border-b border-gray-100 px-4 py-2 flex items-center justify-between">
+      {/* 左侧：房间号 + 分享按钮 + 难度 badge + 倒计时 */}
+      <div className="flex items-center gap-3">
+        <span className="text-sm font-mono font-bold text-gray-700">
+          房间 <span className="text-indigo-600">{roomCode}</span>
         </span>
         <button
           onClick={handleCopy}
-          style={{
-            backgroundColor: copied ? "#4cc9f0" : "#16213e",
-            color: copied ? "#1a1a2e" : "#4cc9f0",
-            border: "1px solid #4cc9f0",
-            borderRadius: "4px",
-            padding: "2px 8px",
-            fontSize: "12px",
-            cursor: "pointer",
-            transition: "all 0.2s",
-          }}
+          className={`text-xs px-2 py-1 rounded border transition ${
+            copied
+              ? "bg-indigo-600 text-white border-indigo-600"
+              : "bg-white text-indigo-600 border-indigo-300 hover:bg-indigo-50"
+          }`}
         >
-          {copied ? "已复制!" : "复制链接"}
+          {copied ? "已复制!" : "分享链接"}
         </button>
-      </div>
 
-      {/* 中间：难度徽章 + 计时器 */}
-      <div className="flex items-center gap-3">
-        <span
-          style={{
-            backgroundColor: difficultyColor(difficulty) + "22",
-            color: difficultyColor(difficulty),
-            border: `1px solid ${difficultyColor(difficulty)}`,
-            borderRadius: "12px",
-            padding: "2px 10px",
-            fontSize: "13px",
-            fontWeight: "bold",
-          }}
-        >
+        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${difficultyBadgeClass(difficulty)}`}>
           {difficultyLabel(difficulty)}
         </span>
 
         {timerMinutes !== null && (
           <span
+            className={`font-mono text-lg font-bold ${
+              showTimer && isLowTime ? "text-red-500" : "text-indigo-600"
+            }`}
             style={{
-              color: showTimer && isLowTime ? "#f72585" : "#ffd700",
-              fontFamily: "monospace",
-              fontSize: "20px",
-              fontWeight: "bold",
               animation: showTimer && isLowTime ? "pulse 0.8s ease-in-out infinite" : "none",
             }}
           >
-            {showTimer
-              ? formatTime(remainingSeconds!)
-              : `${timerMinutes}:00`}
+            {showTimer ? formatTime(remainingSeconds!) : `${timerMinutes}:00`}
           </span>
         )}
 
         {timerMinutes === null && (
-          <span style={{ color: "#888", fontSize: "13px" }}>无时限</span>
+          <span className="text-xs text-gray-400">无时限</span>
         )}
       </div>
 
-      {/* 右侧：玩家连线状态 */}
-      <div className="flex items-center gap-2">
+      {/* 中间：玩家列表 */}
+      <div className="flex items-center gap-4">
         {players.map((p) => (
-          <div key={p.id} className="flex items-center gap-1" title={p.name}>
+          <div key={p.id} className="flex items-center gap-1.5">
+            {/* 在线状态小圆点 */}
             <div
-              style={{
-                width: "8px",
-                height: "8px",
-                borderRadius: "50%",
-                backgroundColor: p.online ? "#4ade80" : "#6b7280",
-                flexShrink: 0,
-              }}
+              className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                p.online ? "bg-green-500" : "bg-gray-300"
+              }`}
             />
             <span
-              style={{
-                fontSize: "13px",
-                color: p.id === myId ? "#4cc9f0" : p.id === ownerId ? "#ffd700" : "#d1d5db",
-                fontWeight: p.id === myId || p.id === ownerId ? "bold" : "normal",
-                maxWidth: "80px",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
+              className={`text-sm font-medium max-w-[80px] truncate ${
+                p.id === myId
+                  ? "text-indigo-600"
+                  : "text-gray-700"
+              }`}
             >
               {p.name}
-              {p.id === ownerId && " 👑"}
             </span>
+            {p.id === ownerId && (
+              <span className="text-xs bg-amber-100 text-amber-700 border border-amber-300 px-1.5 py-0.5 rounded-full font-medium">
+                房主
+              </span>
+            )}
             {phase === "readying" && (
               <span
-                style={{
-                  fontSize: "11px",
-                  color: p.ready ? "#4ade80" : "#9ca3af",
-                }}
+                className={`text-xs ${p.ready ? "text-green-600" : "text-gray-400"}`}
               >
                 {p.ready ? "✓" : "…"}
               </span>
             )}
           </div>
         ))}
+      </div>
+
+      {/* 右侧：离开按钮 */}
+      <div>
+        <button
+          onClick={onLeave}
+          className="text-sm px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 transition font-medium"
+        >
+          离开
+        </button>
       </div>
 
       <style>{`

@@ -9,6 +9,8 @@ install({
   theme: {
     extend: {
       colors: {
+        primary: "#6366f1",
+        "primary-dark": "#4f46e5",
         "game-bg": "#1a1a2e",
         "game-dark": "#0a0a23",
         "game-panel": "#16213e",

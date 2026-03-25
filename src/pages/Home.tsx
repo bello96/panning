@@ -92,29 +92,29 @@ export default function Home({ onEnterRoom, urlError }: HomeProps) {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-[#1a1a2e]">
-      <div className="bg-[#16213e] rounded-2xl shadow-xl p-8 w-full max-w-md border border-[#4cc9f0]/10">
+    <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-[#eff2ff]">
+      <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
         <div className="flex items-center justify-center gap-3 mb-2">
           <span className="text-4xl">🏆</span>
-          <h1 className="text-4xl font-bold text-[#4cc9f0]">迷宫淘金</h1>
+          <h1 className="text-4xl font-bold text-indigo-600">迷宫淘金</h1>
         </div>
-        <p className="text-gray-400 text-center mb-8">双人在线对战，迷宫寻宝，限时比拼</p>
+        <p className="text-gray-500 text-center mb-8">双人在线对战，迷宫寻宝，限时比拼</p>
 
         {error && (
-          <div className="bg-red-900/40 text-red-400 px-4 py-2 rounded-lg mb-4 text-sm">
+          <div className="bg-red-50 text-red-600 px-4 py-2 rounded-lg mb-4 text-sm border border-red-200">
             {error}
           </div>
         )}
         {urlError && !error && (
-          <div className="bg-red-900/40 text-red-400 px-4 py-2 rounded-lg mb-4 text-sm">
+          <div className="bg-red-50 text-red-600 px-4 py-2 rounded-lg mb-4 text-sm border border-red-200">
             {urlError}
           </div>
         )}
-        {tip && <div className="text-yellow-400 text-sm mb-4">{tip}</div>}
+        {tip && <div className="text-amber-600 text-sm mb-4">{tip}</div>}
 
-        <label className="block text-sm font-medium text-gray-300 mb-1">昵称</label>
+        <label className="block text-sm font-medium text-gray-700 mb-1">昵称</label>
         <input
-          className="w-full px-4 py-3 bg-[#0a0a23] border border-[#4cc9f0]/30 rounded-lg focus:ring-2 focus:ring-[#4cc9f0] focus:border-transparent outline-none transition mb-6 text-white placeholder-gray-500"
+          className="w-full px-4 py-3 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-400 focus:border-transparent outline-none transition mb-6 text-gray-800 placeholder-gray-400"
           placeholder="输入你的昵称"
           maxLength={12}
           value={nickname}
@@ -125,7 +125,7 @@ export default function Home({ onEnterRoom, urlError }: HomeProps) {
         />
 
         <button
-          className="w-full py-3 px-4 bg-[#4cc9f0] text-[#0a0a23] font-semibold rounded-lg hover:bg-[#4cc9f0]/80 transition mb-6 disabled:opacity-50"
+          className="w-full py-3 px-4 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition mb-6 disabled:opacity-50"
           onClick={createRoom}
           disabled={loading}
         >
@@ -133,13 +133,13 @@ export default function Home({ onEnterRoom, urlError }: HomeProps) {
         </button>
 
         <div className="flex items-center gap-3 mb-6">
-          <div className="flex-1 h-px bg-[#4cc9f0]/20" />
-          <span className="text-sm text-gray-500">或加入房间</span>
-          <div className="flex-1 h-px bg-[#4cc9f0]/20" />
+          <div className="flex-1 h-px bg-gray-200" />
+          <span className="text-sm text-gray-400">或加入房间</span>
+          <div className="flex-1 h-px bg-gray-200" />
         </div>
 
         <input
-          className="w-full px-4 py-3 bg-[#0a0a23] border border-[#4cc9f0]/30 rounded-lg focus:ring-2 focus:ring-[#4cc9f0] focus:border-transparent outline-none transition text-center text-2xl tracking-[0.5em] mb-3 text-white placeholder-gray-500"
+          className="w-full px-4 py-3 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-400 focus:border-transparent outline-none transition text-center text-2xl tracking-[0.5em] mb-3 text-gray-800 placeholder-gray-400"
           placeholder="房间号"
           maxLength={6}
           value={joinCode}
@@ -154,7 +154,7 @@ export default function Home({ onEnterRoom, urlError }: HomeProps) {
           }}
         />
         <button
-          className="w-full py-3 px-4 bg-[#0a0a23] text-[#4cc9f0] font-semibold rounded-lg border-2 border-[#4cc9f0] hover:bg-[#4cc9f0]/10 transition disabled:opacity-50"
+          className="w-full py-3 px-4 bg-white text-indigo-600 font-semibold rounded-lg border-2 border-indigo-600 hover:bg-indigo-50 transition disabled:opacity-50"
           onClick={joinRoom}
           disabled={loading}
         >
