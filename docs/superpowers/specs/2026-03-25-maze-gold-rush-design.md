@@ -46,25 +46,35 @@
 - 走过的路径保持可见（已探索区域不会重新变暗）
 - 对方位置仍然实时可见（在已探索区域内或在迷雾中显示为模糊标记）
 
-**迷宫生成算法：** 递归回溯法（Recursive Backtracker），保证迷宫连通且有唯一路径结构。
+**迷宫生成算法：** 迭代回溯法（Iterative Backtracker，使用显式栈代替递归），保证迷宫连通且有唯一路径结构。使用迭代版本以避免 Cloudflare Workers 调用栈限制。
 
 ## 房间状态机
 
+服务端维护四个阶段。倒计时是 `readying → playing` 过渡期间的客户端 UI 效果，不是独立的服务端 phase。
+
 ```
-waiting → readying → countdown → playing → ended
-                                              ↓
-                                          (再来一局)
-                                              ↓
-                                          readying
+waiting → readying → playing → ended
+                                 ↓
+                             (再来一局)
+                                 ↓
+                             readying
 ```
 
 | 阶段 | 触发条件 | 行为 |
 |------|---------|------|
 | waiting | 房主创建房间 | 显示房间码和分享链接，等待对手加入 |
 | readying | 第二人加入 | 房主选择难度和限时；对手点"准备" |
-| countdown | 房主点"开始游戏" | 全屏半透明遮罩倒计时 3→2→1→GO!，服务端生成迷宫 |
-| playing | 倒计时结束 | 方向键移动，Canvas 实时渲染，到达金子触发胜利 |
-| ended | 到达金子 / 超时 | 弹窗显示胜负结果，房主可选"再来一局" |
+| playing | 房主点"开始游戏" | 服务端生成迷宫，广播 `gameStart`（含迷宫数据），客户端收到后显示倒计时遮罩 3→2→1→GO!，倒计时结束后客户端允许移动操作 |
+| ended | 到达金子 / 超时 | 弹窗显示胜负结果。房主端显示"再来一局"按钮，对手端显示"等待房主操作"。房主点击后回到 readying，可重新选择难度 |
+
+**倒计时时序：**
+1. 房主点击"开始游戏" → 发送 `startGame`
+2. 服务端生成迷宫 → phase 变为 `playing` → 广播 `gameStart`（含迷宫数据 + 游戏开始时间戳，时间戳 = 当前时间 + 4秒）
+3. 客户端收到 `gameStart` → 渲染迷宫 + 显示倒计时遮罩 3→2→1→GO!
+4. 到达游戏开始时间戳 → 客户端允许发送 `move` 消息
+5. 服务端忽略开始时间戳之前收到的 `move` 消息
+
+**倒计时期间断线：** 服务端已进入 playing phase，按正常断线重连处理（30 秒宽限期）。重连后客户端根据 `roomState` 中的开始时间戳判断是否仍在倒计时。
 
 ## 页面布局
 
@@ -123,7 +133,8 @@ panning/
 ├── worker/
 │   ├── src/
 │   │   ├── index.ts             # Worker 入口 + HTTP 路由
-│   │   └── room.ts              # MazeRoom Durable Object
+│   │   ├── room.ts              # MazeRoom Durable Object
+│   │   └── maze.ts              # 迷宫生成算法（迭代回溯法）
 │   ├── wrangler.toml
 │   └── package.json
 │
@@ -143,14 +154,14 @@ panning/
 
 | 类型 | 载荷 | 用途 |
 |------|------|------|
-| `join` | `{ name }` | 加入房间 |
+| `join` | `{ playerName, playerId? }` | 加入房间（playerId 用于断线重连身份恢复） |
 | `ready` | — | 标记准备（非房主） |
 | `setDifficulty` | `{ difficulty: 'easy' \| 'medium' \| 'hard' }` | 房主设置难度 |
-| `setTimer` | `{ minutes: number \| null }` | 房主设置限时（null=无限时） |
+| `setTimer` | `{ minutes: 3 \| 5 \| 10 \| null }` | 房主设置限时（null=无限时） |
 | `startGame` | — | 房主开始游戏 |
 | `move` | `{ direction: 'up' \| 'down' \| 'left' \| 'right' }` | 移动 |
 | `chat` | `{ text }` | 聊天 |
-| `playAgain` | — | 再来一局 |
+| `playAgain` | — | 再来一局（仅房主可发送） |
 | `leave` | — | 离开房间 |
 | `ping` | — | 心跳 |
 
@@ -158,21 +169,23 @@ panning/
 
 | 类型 | 载荷 | 用途 |
 |------|------|------|
-| `roomState` | 完整房间状态 | 加入时同步 |
+| `roomState` | 见下方 RoomState 定义 | 加入/重连时同步完整状态 |
 | `playerJoined` | `{ id, name }` | 对手加入 |
 | `playerLeft` | `{ id }` | 对手离开 |
 | `phaseChange` | `{ phase }` | 阶段变更 |
-| `countdown` | `{ count: 3\|2\|1\|0 }` | 倒计时 |
-| `gameStart` | `{ maze, gold, entrances, assignments }` | 游戏开始 + 迷宫数据 |
+| `gameStart` | `{ maze, assignments, gameStartsAt }` | 游戏开始 + 迷宫数据 + 开始时间戳 |
 | `playerMoved` | `{ playerId, position }` | 位置更新 |
-| `gameEnd` | `{ winnerId, reason }` | 游戏结束 |
+| `gameEnd` | `{ winnerId, reason }` | 游戏结束（reason: 'gold' / 'timeout' / 'disconnect'） |
 | `difficultyChanged` | `{ difficulty }` | 难度变更广播 |
 | `timerChanged` | `{ minutes }` | 限时变更广播 |
 | `readyChanged` | `{ playerId, ready }` | 准备状态变更 |
 | `chat` | `{ playerId, name, text }` | 聊天消息 |
+| `roomClosed` | `{ reason }` | 房间关闭（超时/全员离开） |
 | `error` | `{ message }` | 错误 |
 
-## 迷宫数据结构
+## 数据结构
+
+### 迷宫数据
 
 ```typescript
 // 每个格子的墙壁状态（位掩码）
@@ -197,13 +210,39 @@ interface PlayerAssignment {
 }
 ```
 
+### RoomState（完整房间状态）
+
+```typescript
+interface RoomState {
+  roomCode: string;
+  phase: 'waiting' | 'readying' | 'playing' | 'ended';
+  ownerId: string;
+  players: {
+    id: string;
+    name: string;
+    online: boolean;
+    ready: boolean;
+  }[];
+  difficulty: 'easy' | 'medium' | 'hard';
+  timerMinutes: 3 | 5 | 10 | null;      // null = 无限时
+  // playing / ended 阶段才有以下字段
+  maze?: MazeData;
+  assignments?: PlayerAssignment;
+  gameStartsAt?: number;                // 游戏开始时间戳（ms）
+  positions?: { [playerId: string]: { x: number; y: number } };
+  winnerId?: string | null;             // ended 阶段，null = 平局
+  explored?: { [playerId: string]: boolean[][] }; // 困难模式迷雾探索状态
+}
+```
+
 ## 迷宫生成
 
-- **算法**：递归回溯法（Recursive Backtracker）
+- **算法**：迭代回溯法（Iterative Backtracker，显式栈），避免 Workers 调用栈限制
 - **执行位置**：服务端（Durable Object 内），防止客户端作弊
-- **生成时机**：房主点击"开始游戏"后，倒计时期间生成
-- **入口选择**：从迷宫边缘格子中随机选取两个，确保两个入口之间有足够距离（至少迷宫对角线长度的 40%）
-- **金子放置**：随机选取迷宫内部格子，确保距离两个入口的路径长度差异不超过 30%（保证公平性）
+- **生成时机**：房主点击"开始游戏"后，服务端立即生成，随 `gameStart` 消息广播
+- **入口选择**：从迷宫边缘格子中随机选取两个，确保两个入口之间的欧几里得直线距离 >= 迷宫对角线长度的 40%
+- **金子放置**：使用 BFS 计算从两个入口到所有格子的路径长度，选取满足 `|pathA - pathB| / max(pathA, pathB) <= 0.3` 的格子，从中随机选一个。若无满足条件的格子，放宽至 0.5；仍无则取差异最小的格子
+- **服务端迷宫文件**：迷宫生成逻辑位于 `worker/src/maze.ts`
 
 ## Canvas 渲染
 
@@ -222,10 +261,30 @@ interface PlayerAssignment {
 
 ### 迷雾效果（困难模式）
 - 使用 Canvas 的 `globalCompositeOperation` 实现
-- 可见区域：以玩家为中心的圆形区域（半径 ~3 格）
-- 已探索区域：保持可见但略微变暗
+- 可见区域：以玩家为中心的圆形区域，半径 3 格（欧几里得距离）
+- 已探索区域：保持可见但略微变暗（opacity 0.6）
 - 未探索区域：完全遮罩（黑色）
-- 迷雾状态存储在客户端（二维 boolean 数组）
+- 迷雾探索状态存储在**服务端**（`explored` 字段），确保断线重连时不丢失探索进度
+
+## 移动与碰撞
+
+### 移动验证
+- 客户端按方向键 → 本地校验是否有墙（位掩码判断）→ 合法则立即移动（客户端预测）+ 发送 `move` 消息
+- 服务端收到 `move` → 二次校验合法性 → 合法则更新位置并广播 `playerMoved`；非法则发送 `error` + 强制回退位置
+- 服务端忽略 `gameStartsAt` 时间戳之前的 `move` 消息
+
+### 移动节流
+- 客户端最小移动间隔：80ms（防止消息泛滥）
+- 在间隔内的按键排队，间隔到达后发送最近的方向
+
+### 胜负判定
+- 服务端在每次合法移动后检查玩家位置是否与金子重合
+- 同时到达：按服务端消息处理顺序，先处理的 `move` 先判定（先到先得）
+- 超时判定：服务端通过 Durable Object alarm 定时触发
+
+### 键盘与聊天冲突
+- 聊天输入框获得焦点时，方向键事件不触发移动
+- 按 Enter 聚焦/提交聊天，按 Escape 取消聊天焦点回到游戏
 
 ## 断线重连
 
