@@ -4,3 +4,7 @@ dist/
 .wrangler/
 .superpowers/
 .env.local
+
+.dev.vars*
+!.dev.vars.example
+!.env.example
