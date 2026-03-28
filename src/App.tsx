@@ -40,7 +40,10 @@ export default function App() {
   const [nicknameInput, setNicknameInput] = useState("");
   const [urlError, setUrlError] = useState("");
   const [pendingError, setPendingError] = useState("");
+  const [pendingJoining, setPendingJoining] = useState(false);
   const [pendingOwnerName, setPendingOwnerName] = useState<string | null>(null);
+  const [pendingInfoLoading, setPendingInfoLoading] = useState(false);
+  const [pendingInfoFailed, setPendingInfoFailed] = useState(false);
 
   useEffect(() => {
     const urlMatch = window.location.pathname.match(/^\/(\d{6})$/);
@@ -56,14 +59,37 @@ export default function App() {
       }
       setNicknameInput(session?.nickname || "");
       setPendingCode(code);
+      setPendingInfoLoading(true);
+      setPendingInfoFailed(false);
       fetch(`${getHttpBase()}/api/rooms/${code}`)
-        .then((res) => res.json())
-        .then((info: { ownerName?: string }) => {
+        .then((res) => {
+          if (!res.ok) {
+            throw new Error("房间不存在");
+          }
+          return res.json();
+        })
+        .then((info: { ownerName?: string; closed?: boolean }) => {
+          if (info.closed) {
+            throw new Error("房间已关闭");
+          }
           if (info.ownerName) {
             setPendingOwnerName(info.ownerName);
           }
+          setPendingInfoLoading(false);
         })
-        .catch(() => {});
+        .catch((e: Error) => {
+          setPendingInfoLoading(false);
+          setPendingInfoFailed(true);
+          setPendingError(e.message || "无法获取房间信息");
+          setTimeout(() => {
+            setPendingCode(null);
+            setPendingError("");
+            setPendingInfoFailed(false);
+            setUrlError(e.message || "房间不存在或已关闭");
+            window.history.replaceState(null, "", "/");
+            setTimeout(() => setUrlError(""), 3000);
+          }, 1500);
+        });
     }
   }, []);
 
@@ -77,6 +103,7 @@ export default function App() {
 
   async function confirmPendingJoin(code: string, name: string) {
     setPendingError("");
+    setPendingJoining(true);
     try {
       const res = await fetch(`${getHttpBase()}/api/rooms/${code}`);
       if (!res.ok) {
@@ -96,6 +123,7 @@ export default function App() {
       enterRoom(code, name, genId());
       setPendingCode(null);
     } catch (e) {
+      setPendingJoining(false);
       setPendingError((e as Error).message);
       setTimeout(() => {
         setPendingCode(null);
@@ -123,12 +151,14 @@ export default function App() {
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
         <div className="bg-white rounded-2xl p-8 w-full max-w-sm shadow-xl">
-          {pendingOwnerName && (
+          {pendingInfoLoading ? (
+            <div className="text-center mb-4 text-gray-400">正在获取房间信息...</div>
+          ) : pendingOwnerName ? (
             <div className="text-center mb-4">
               <span className="text-indigo-600 font-bold">{pendingOwnerName}</span>
               <span className="text-gray-600"> 邀请你一起迷宫淘金</span>
             </div>
-          )}
+          ) : null}
           <h3 className="text-lg font-bold text-gray-700 mb-4">输入昵称加入房间</h3>
           {pendingError && (
             <div className="bg-red-50 text-red-600 px-4 py-2 rounded-lg mb-4 text-sm">
@@ -142,18 +172,18 @@ export default function App() {
             value={nicknameInput}
             onChange={(e) => setNicknameInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && nicknameInput.trim()) {
+              if (e.key === "Enter" && nicknameInput.trim() && !pendingInfoLoading && !pendingInfoFailed && !pendingJoining) {
                 confirmPendingJoin(pendingCode, nicknameInput.trim());
               }
             }}
             autoFocus
           />
           <button
-            className="w-full py-3 px-4 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition disabled:opacity-50"
-            disabled={!nicknameInput.trim() || !!pendingError}
+            className="w-full py-3 px-4 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!nicknameInput.trim() || !!pendingError || pendingJoining || pendingInfoLoading || pendingInfoFailed}
             onClick={() => confirmPendingJoin(pendingCode, nicknameInput.trim())}
           >
-            加入
+            {pendingJoining ? "加入中..." : "加入"}
           </button>
         </div>
       </div>

@@ -101,10 +101,12 @@ export function useWebSocket(url: string | null) {
     };
   }, [url, connect]);
 
-  const send = useCallback((msg: ClientMessage) => {
+  const send = useCallback((msg: ClientMessage): boolean => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(msg));
+      return true;
     }
+    return false;
   }, []);
 
   const addListener = useCallback((fn: Listener) => {

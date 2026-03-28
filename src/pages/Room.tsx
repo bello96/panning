@@ -17,6 +17,8 @@ import type {
   S_GameStart,
 } from "../types/protocol";
 
+const bullionUrl = new URL("../imgs/bullion.png", import.meta.url).href;
+
 interface RoomProps {
   roomCode: string;
   nickname: string;
@@ -45,7 +47,10 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
   const [showCountdown, setShowCountdown] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
   const [showResult, setShowResult] = useState(false);
+  const [readyLoading, setReadyLoading] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [stepCount, setStepCount] = useState(0);
+  const [showSurrenderConfirm, setShowSurrenderConfirm] = useState(false);
 
   /* ── WebSocket ── */
   const wsUrl = `${getWsBase()}/api/rooms/${roomCode}/ws`;
@@ -107,6 +112,7 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
             setWinnerName("");
             setShowConfetti(false);
             setShowResult(false);
+            setReadyLoading(false);
             setPlayers((prev) =>
               prev.map((p) => ({ ...p, ready: false })),
             );
@@ -114,6 +120,7 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
           break;
         case "gameStart": {
           setPhase("playing");
+          setStepCount(0);
           setMaze(msg.maze);
           setGameStartsAt(msg.gameStartsAt);
           const gameStartMsg = msg as S_GameStart & { positions?: Record<string, Position> };
@@ -131,7 +138,7 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
           break;
         }
         case "playerMoved":
-          // 本地玩家已经乐观更新了，只同步对方的位置
+          // 本地玩家已乐观更新，只同步对方位置（send 失败时不会乐观更新，所以不会漂移）
           if (msg.playerId !== playerId) {
             setPositions((prev) => ({ ...prev, [msg.playerId]: msg.position }));
           }
@@ -154,6 +161,7 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
           setDifficulty(msg.difficulty);
           break;
         case "readyChanged":
+          setReadyLoading(false);
           setPlayers((prev) =>
             prev.map((p) =>
               p.id === msg.playerId ? { ...p, ready: msg.ready } : p,
@@ -232,8 +240,11 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
       }
 
       const newPos = { x: nx, y: ny };
-      setPositions((prev) => ({ ...prev, [myIdRef.current]: newPos }));
-      send({ type: "move", direction });
+      const sent = send({ type: "move", direction });
+      if (sent) {
+        setPositions((prev) => ({ ...prev, [myIdRef.current]: newPos }));
+        setStepCount((prev) => prev + 1);
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -334,27 +345,28 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
             </div>
           )}
 
-          {/* Playing: elapsed timer + surrender */}
+          {/* Spacer */}
+          <div className="flex-1" />
+
+          {/* Playing: elapsed timer + surrender — 靠右 */}
           {phase === "playing" && (
             <>
-              <span className="text-sm font-mono text-gray-500 ml-2">
-                {String(Math.floor(elapsedSeconds / 60)).padStart(2, "0")}:{String(elapsedSeconds % 60).padStart(2, "0")}
+              <span className="text-sm text-gray-500">
+                <span className="text-gray-400">用时:</span>
+                <span className="font-mono">{String(Math.floor(elapsedSeconds / 60)).padStart(2, "0")}:{String(elapsedSeconds % 60).padStart(2, "0")}</span>
+              </span>
+              <span className="text-sm text-gray-500">
+                <span className="text-gray-400">步数:</span>
+                <span className="font-mono">{stepCount}</span>
               </span>
               <button
-                onClick={() => {
-                  if (window.confirm("确定投降吗？")) {
-                    send({ type: "surrender" });
-                  }
-                }}
+                onClick={() => setShowSurrenderConfirm(true)}
                 className="text-xs px-2 py-1 rounded-lg bg-red-50 text-red-500 border border-red-200 hover:bg-red-100 transition"
               >
                 投降
               </button>
             </>
           )}
-
-          {/* Spacer */}
-          <div className="flex-1" />
 
           {/* Readying controls — right side */}
           {phase === "readying" && isOwner && (
@@ -384,16 +396,25 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
           )}
           {phase === "readying" && !isOwner && (
             <button
-              onClick={() => send({ type: "ready" })}
-              className={`px-4 py-1.5 rounded-lg text-sm font-bold transition ${
+              onClick={() => {
+                if (readyLoading) {
+                  return;
+                }
+                setReadyLoading(true);
+                send({ type: "ready" });
+              }}
+              disabled={readyLoading}
+              className={`px-4 py-1.5 rounded-lg text-sm font-bold transition disabled:opacity-50 disabled:cursor-not-allowed ${
                 players.find((p) => p.id === myId)?.ready
                   ? "bg-green-500 text-white hover:bg-green-600"
                   : "bg-indigo-600 text-white hover:bg-indigo-700"
               }`}
             >
-              {players.find((p) => p.id === myId)?.ready
-                ? "已准备 \u2713"
-                : "准备"}
+              {readyLoading
+                ? "准备中..."
+                : players.find((p) => p.id === myId)?.ready
+                  ? "已准备 \u2713"
+                  : "准备"}
             </button>
           )}
         </div>
@@ -407,12 +428,27 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
               difficulty={difficulty}
             />
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-gray-400">
-              {phase === "waiting"
-                ? "等待对手加入后开始游戏"
-                : phase === "readying"
-                  ? "准备就绪后开始游戏"
-                  : "加载中..."}
+            <div className="w-full h-full flex flex-col items-center justify-center text-gray-400">
+              {(phase === "waiting" || phase === "readying") && (
+                <>
+                  <img
+                    src={bullionUrl}
+                    alt="gold"
+                    className="w-24 h-24 mb-4 gold-shimmer"
+                  />
+                  <span className="text-lg">
+                    {phase === "waiting" ? "等待对手加入后开始游戏" : "准备就绪后开始游戏"}
+                  </span>
+                  <style>{`
+                    @keyframes gold-shimmer {
+                      0%, 100% { opacity: 1; filter: brightness(1) drop-shadow(0 0 4px transparent); transform: scale(1); }
+                      50% { opacity: 0.75; filter: brightness(1.4) drop-shadow(0 0 12px #ffd700); transform: scale(1.08); }
+                    }
+                    .gold-shimmer { animation: gold-shimmer 1.6s ease-in-out infinite; }
+                  `}</style>
+                </>
+              )}
+              {phase !== "waiting" && phase !== "readying" && "加载中..."}
             </div>
           )}
           {showCountdown && (
@@ -439,6 +475,34 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
         />
       )}
       <Confetti show={showConfetti} />
+
+      {/* 投降确认弹框 */}
+      {showSurrenderConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-xs shadow-xl text-center">
+            <div className="text-4xl mb-3">🏳️</div>
+            <h3 className="text-lg font-bold text-gray-700 mb-2">确定要投降吗？</h3>
+            <p className="text-sm text-gray-400 mb-5">投降后对方将直接获胜</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowSurrenderConfirm(false)}
+                className="flex-1 py-2.5 rounded-lg bg-gray-100 text-gray-600 font-medium hover:bg-gray-200 transition"
+              >
+                取消
+              </button>
+              <button
+                onClick={() => {
+                  setShowSurrenderConfirm(false);
+                  send({ type: "surrender" });
+                }}
+                className="flex-1 py-2.5 rounded-lg bg-red-500 text-white font-medium hover:bg-red-600 transition"
+              >
+                确定投降
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

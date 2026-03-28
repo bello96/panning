@@ -4,3 +4,4 @@ dist/
 .wrangler/
 .superpowers/
 .env.local
+.claude

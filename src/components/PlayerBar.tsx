@@ -31,9 +31,9 @@ export default function PlayerBar({
   };
 
   return (
-    <div className="bg-white shadow-sm border-b border-gray-100 px-4 py-2 flex items-center justify-between">
-      {/* 左侧：房间号 + 分享 + 难度 */}
-      <div className="flex items-center gap-3">
+    <div className="bg-white shadow-sm border-b border-gray-100 px-4 py-2 flex items-center">
+      {/* 左侧：房间号 + 分享（1份宽度） */}
+      <div className="flex-1 flex items-center gap-3 min-w-0">
         <span className="text-sm font-mono font-bold text-gray-700">
           房间 <span className="text-indigo-600">{roomCode}</span>
         </span>
@@ -51,8 +51,8 @@ export default function PlayerBar({
         )}
       </div>
 
-      {/* 中间：玩家列表 */}
-      <div className="flex items-center gap-4">
+      {/* 中间：玩家列表（2份宽度） */}
+      <div className="flex-[2] flex items-center justify-center gap-4 min-w-0">
         {players.map((p) => (
           <div key={p.id} className="flex items-center gap-1.5">
             <div
@@ -83,8 +83,8 @@ export default function PlayerBar({
         ))}
       </div>
 
-      {/* 右侧：转让房主 + 离开按钮 */}
-      <div className="flex items-center gap-2">
+      {/* 右侧：转让房主 + 离开按钮（1份宽度） */}
+      <div className="flex-1 flex items-center justify-end gap-2 min-w-0">
         {myId === ownerId && players.length === 2 && phase !== "playing" && onTransferOwner && (
           <button
             onClick={onTransferOwner}
