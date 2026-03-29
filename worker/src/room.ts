@@ -324,7 +324,7 @@ export class MazeRoom extends DurableObject {
     ws: WebSocket,
     msg: Record<string, unknown>,
   ): void {
-    if (this.phase !== "readying") {
+    if (this.phase !== "waiting" && this.phase !== "readying") {
       return;
     }
 
