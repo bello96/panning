@@ -63,6 +63,33 @@ export function generateMaze(difficulty: Difficulty, singlePlayer = false): Maze
     stack.push({ x: chosen.nx, y: chosen.ny });
   }
 
+  // 打通额外墙壁，制造岔路和环路，增加迷惑性
+  // 收集所有仍然存在的内部墙壁
+  const extraWallRatio: Record<Difficulty, number> = { easy: 0.12, medium: 0.10, hard: 0.08 };
+  const internalWalls: { x: number; y: number; wall: number; nx: number; ny: number; opposite: number }[] = [];
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      // 只收集右墙和下墙，避免重复
+      if (x < size - 1 && (cells[y][x] & WALL_RIGHT)) {
+        internalWalls.push({ x, y, wall: WALL_RIGHT, nx: x + 1, ny: y, opposite: WALL_LEFT });
+      }
+      if (y < size - 1 && (cells[y][x] & WALL_BOTTOM)) {
+        internalWalls.push({ x, y, wall: WALL_BOTTOM, nx: x, ny: y + 1, opposite: WALL_TOP });
+      }
+    }
+  }
+  // 随机打乱后移除一定比例的墙壁
+  for (let i = internalWalls.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [internalWalls[i], internalWalls[j]] = [internalWalls[j], internalWalls[i]];
+  }
+  const removeCount = Math.floor(internalWalls.length * extraWallRatio[difficulty]);
+  for (let i = 0; i < removeCount; i++) {
+    const w = internalWalls[i];
+    cells[w.y][w.x] &= ~w.wall;
+    cells[w.ny][w.nx] &= ~w.opposite;
+  }
+
   const entrance: Position = { x: 0, y: 0 };
   cells[0][0] &= ~WALL_TOP;
 
