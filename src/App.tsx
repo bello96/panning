@@ -119,8 +119,8 @@ export default function App() {
         playerCount: number;
         closed: boolean;
       };
-      if (info.closed || !info.roomCode) {
-        throw new Error("房间不存在或已关闭");
+      if (info.closed) {
+        throw new Error("房间已关闭");
       }
       if (info.playerCount >= 2) {
         throw new Error("房间已满，无法加入");
