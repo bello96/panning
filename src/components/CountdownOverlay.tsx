@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { SFX } from "../hooks/useSound";
 
 interface CountdownOverlayProps {
   gameStartsAt: number;
@@ -21,7 +22,7 @@ export default function CountdownOverlay({ gameStartsAt, onDone }: CountdownOver
       const msLeft = gameStartsAt - now;
 
       if (msLeft > 3000) {
-        setLabel("3");
+        // 等待倒计时开始，不做任何状态更新
       } else if (msLeft > 2000) {
         updateLabel("3");
       } else if (msLeft > 1000) {
@@ -32,6 +33,7 @@ export default function CountdownOverlay({ gameStartsAt, onDone }: CountdownOver
         // msLeft <= 0: show GO! briefly then call onDone
         if (goShownAt === null) {
           goShownAt = now;
+          SFX.go.play();
           setLabel((prev) => {
             if (prev !== "GO!") { setKey((k) => k + 1); }
             return "GO!";
@@ -52,6 +54,7 @@ export default function CountdownOverlay({ gameStartsAt, onDone }: CountdownOver
         prevLabel = next;
         setLabel(next);
         setKey((k) => k + 1);
+        SFX.tick.play();
       }
     }
 

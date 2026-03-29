@@ -58,7 +58,7 @@ export default function Confetti({ show }: { show: boolean }) {
   }
 
   return (
-    <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
+    <div className="fixed inset-0 pointer-events-none overflow-hidden" style={{ zIndex: 300 }}>
       {particles.map((p) => {
         const rad = (p.angle * Math.PI) / 180;
         const distX = Math.cos(rad) * p.speed * 120;

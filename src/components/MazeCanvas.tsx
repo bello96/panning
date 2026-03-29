@@ -140,21 +140,24 @@ export default function MazeCanvas({
         }
       }
 
-      // 3. Walls
+      // 3. Walls — 每面墙只画一次，避免重叠导致粗细不一
       ctx.strokeStyle = "#8b95a8";
       ctx.lineWidth = diff === "easy" ? 3 : diff === "medium" ? 2 : 1.5;
+      ctx.beginPath();
       for (let y = 0; y < m.size; y++) {
         for (let x = 0; x < m.size; x++) {
           const cell = m.cells[y][x];
           const cx = x * cs, cy = y * cs;
-          ctx.beginPath();
+          // 每个格子只画 TOP 和 LEFT，避免与相邻格子重复
           if (cell & WALL_TOP) { ctx.moveTo(cx, cy); ctx.lineTo(cx + cs, cy); }
-          if (cell & WALL_RIGHT) { ctx.moveTo(cx + cs, cy); ctx.lineTo(cx + cs, cy + cs); }
-          if (cell & WALL_BOTTOM) { ctx.moveTo(cx, cy + cs); ctx.lineTo(cx + cs, cy + cs); }
           if (cell & WALL_LEFT) { ctx.moveTo(cx, cy); ctx.lineTo(cx, cy + cs); }
-          ctx.stroke();
+          // 最后一列补 RIGHT
+          if (x === m.size - 1 && (cell & WALL_RIGHT)) { ctx.moveTo(cx + cs, cy); ctx.lineTo(cx + cs, cy + cs); }
+          // 最后一行补 BOTTOM
+          if (y === m.size - 1 && (cell & WALL_BOTTOM)) { ctx.moveTo(cx, cy + cs); ctx.lineTo(cx + cs, cy + cs); }
         }
       }
+      ctx.stroke();
 
       // 3.5 Outer border — thick wall around maze, with entrance gaps
       const borderW = diff === "easy" ? 5 : diff === "medium" ? 4 : 3;

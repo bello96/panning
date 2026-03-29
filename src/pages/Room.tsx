@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { getWsBase, getHttpBase } from "../api";
-import { hasWall } from "../utils/maze";
+import { hasWall, shortestPath } from "../utils/maze";
 import MazeCanvas, { type PlayerRender } from "../components/MazeCanvas";
 import PlayerBar from "../components/PlayerBar";
 import CountdownOverlay from "../components/CountdownOverlay";
 import GameResultModal from "../components/GameResultModal";
 import Confetti from "../components/Confetti";
+import { SFX } from "../hooks/useSound";
 import type {
   GamePhase,
   Difficulty,
@@ -23,16 +24,17 @@ interface RoomProps {
   roomCode: string;
   nickname: string;
   playerId: string;
+  initialDifficulty?: Difficulty;
   onLeave: () => void;
 }
 
-export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProps) {
+export default function Room({ roomCode, nickname, playerId, initialDifficulty, onLeave }: RoomProps) {
   /* ── Room state ── */
   const [myId, setMyId] = useState("");
   const [players, setPlayers] = useState<PlayerInfo[]>([]);
   const [ownerId, setOwnerId] = useState("");
   const [phase, setPhase] = useState<GamePhase>("waiting");
-  const [difficulty, setDifficulty] = useState<Difficulty>("medium");
+  const [difficulty, setDifficulty] = useState<Difficulty>(initialDifficulty ?? "medium");
 
   /* ── Game state ── */
   const [maze, setMaze] = useState<MazeData | null>(null);
@@ -50,6 +52,7 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
   const [readyLoading, setReadyLoading] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [stepCount, setStepCount] = useState(0);
+  const [optimalSteps, setOptimalSteps] = useState(0);
   const [showSurrenderConfirm, setShowSurrenderConfirm] = useState(false);
 
   /* ── WebSocket ── */
@@ -60,8 +63,12 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
   useEffect(() => {
     if (connected) {
       send({ type: "join", playerName: nickname, playerId });
+      // 房主创建时把首页选的难度同步给服务端
+      if (initialDifficulty) {
+        send({ type: "setDifficulty", difficulty: initialDifficulty });
+      }
     }
-  }, [connected, nickname, playerId, send]);
+  }, [connected, nickname, playerId, initialDifficulty, send]);
 
   /* ── Effect: WebSocket message handler ── */
   useEffect(() => {
@@ -153,8 +160,25 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
           if (gameStartsAtRef.current) {
             setGameDuration(Math.floor((Date.now() - gameStartsAtRef.current) / 1000));
           }
+          // 计算最优步数
+          if (mazeRef.current) {
+            const m = mazeRef.current;
+            const myEntrance = positionsRef.current[myIdRef.current] ?? m.entrances[0];
+            const optimal = shortestPath(m, m.entrances[0], m.gold);
+            const optimal2 = shortestPath(m, m.entrances[1], m.gold);
+            // 取当前玩家入口到金子的最短路径
+            const d0 = Math.abs(myEntrance.x - m.entrances[0].x) + Math.abs(myEntrance.y - m.entrances[0].y);
+            const d1 = Math.abs(myEntrance.x - m.entrances[1].x) + Math.abs(myEntrance.y - m.entrances[1].y);
+            setOptimalSteps(d0 <= d1 ? optimal : optimal2);
+          }
           if (msg.winnerId === myId) {
             setShowConfetti(true);
+            if (msg.reason === "gold") {
+              SFX.gold.play();
+            }
+            setTimeout(() => SFX.win.play(), 300);
+          } else {
+            SFX.lose.play();
           }
           break;
         case "difficultyChanged":
@@ -188,6 +212,8 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
   gameStartsAtRef.current = gameStartsAt;
   const myIdRef = useRef(myId);
   myIdRef.current = myId;
+  const showCountdownRef = useRef(showCountdown);
+  showCountdownRef.current = showCountdown;
 
   /* ── Effect: Keyboard movement handler (cell-to-cell) ── */
   useEffect(() => {
@@ -206,7 +232,7 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
         ArrowRight: "right",
       };
       const direction = dirMap[e.key];
-      if (!direction || !mazeRef.current || Date.now() < gameStartsAtRef.current) {
+      if (!direction || !mazeRef.current || showCountdownRef.current) {
         return;
       }
       e.preventDefault();
@@ -227,6 +253,7 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
         return;
       }
       if (hasWall(cell, direction)) {
+        SFX.bump.play();
         return;
       }
 
@@ -242,6 +269,7 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
       const newPos = { x: nx, y: ny };
       const sent = send({ type: "move", direction });
       if (sent) {
+        SFX.move.play();
         setPositions((prev) => ({ ...prev, [myIdRef.current]: newPos }));
         setStepCount((prev) => prev + 1);
       }
@@ -371,20 +399,19 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
           {/* Readying controls — right side */}
           {phase === "readying" && isOwner && (
             <>
-              <select
-                value={difficulty}
-                onChange={(e) =>
-                  send({
-                    type: "setDifficulty",
-                    difficulty: e.target.value as Difficulty,
-                  })
-                }
-                className="px-2 py-1.5 rounded-lg bg-white border border-gray-300 text-gray-700 text-sm focus:ring-2 focus:ring-indigo-400 outline-none"
-              >
-                <option value="easy">简单</option>
-                <option value="medium">中等</option>
-                <option value="hard">困难</option>
-              </select>
+              {(["easy", "medium", "hard"] as Difficulty[]).map((d) => (
+                <button
+                  key={d}
+                  onClick={() => send({ type: "setDifficulty", difficulty: d })}
+                  className={`px-3 py-1 rounded-lg text-xs font-medium transition ${
+                    difficulty === d
+                      ? "bg-indigo-100 text-indigo-700 border border-indigo-300"
+                      : "bg-gray-100 text-gray-500 hover:bg-gray-200 border border-gray-200"
+                  }`}
+                >
+                  {d === "easy" ? "简单" : d === "medium" ? "中等" : "困难"}
+                </button>
+              ))}
               <button
                 onClick={() => send({ type: "startGame" })}
                 disabled={!opponent?.ready}
@@ -468,8 +495,16 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
           myId={myId}
           reason={gameEndReason}
           isOwner={isOwner}
+          connected={connected}
           gameDuration={gameDuration}
-          onPlayAgain={() => send({ type: "playAgain" })}
+          stepCount={stepCount}
+          optimalSteps={optimalSteps}
+          onPlayAgain={() => {
+            const sent = send({ type: "playAgain" });
+            if (!sent) {
+              alert("连接已断开，正在重连，请稍后再试");
+            }
+          }}
           onLeave={handleLeave}
           onClose={() => setShowResult(false)}
         />
@@ -492,8 +527,12 @@ export default function Room({ roomCode, nickname, playerId, onLeave }: RoomProp
               </button>
               <button
                 onClick={() => {
-                  setShowSurrenderConfirm(false);
-                  send({ type: "surrender" });
+                  const sent = send({ type: "surrender" });
+                  if (sent) {
+                    setShowSurrenderConfirm(false);
+                  } else {
+                    alert("网络连接断开，请刷新页面重试");
+                  }
                 }}
                 className="flex-1 py-2.5 rounded-lg bg-red-500 text-white font-medium hover:bg-red-600 transition"
               >

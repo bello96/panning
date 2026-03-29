@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- 迷宫背景 -->
+  <rect width="64" height="64" rx="8" fill="#6366f1"/>
+  <!-- 迷宫路径 -->
+  <g stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round">
+    <path d="M12 12h40v40H12z"/>
+    <path d="M12 22h20"/>
+    <path d="M22 22v10"/>
+    <path d="M22 32h20"/>
+    <path d="M42 22v-0"/>
+    <path d="M32 32v10"/>
+    <path d="M32 42h-10"/>
+    <path d="M42 32v10"/>
+    <path d="M12 32h0"/>
+    <path d="M52 42v10"/>
+  </g>
+  <!-- 金子 -->
+  <circle cx="47" cy="47" r="8" fill="#fbbf24"/>
+  <circle cx="47" cy="47" r="5" fill="#f59e0b"/>
+  <text x="47" y="51" text-anchor="middle" font-size="10" font-weight="bold" fill="#fff">$</text>
+</svg>

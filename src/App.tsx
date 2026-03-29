@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { getHttpBase } from "./api";
 import Home from "./pages/Home";
 import Room from "./pages/Room";
+import SinglePlayer from "./pages/SinglePlayer";
+import type { Difficulty } from "./types/protocol";
 
 interface RoomSession {
   roomCode: string;
@@ -44,6 +46,9 @@ export default function App() {
   const [pendingOwnerName, setPendingOwnerName] = useState<string | null>(null);
   const [pendingInfoLoading, setPendingInfoLoading] = useState(false);
   const [pendingInfoFailed, setPendingInfoFailed] = useState(false);
+  const [singlePlayerDifficulty, setSinglePlayerDifficulty] = useState<Difficulty | null>(null);
+  const [createLoading, setCreateLoading] = useState(false);
+  const [initialDifficulty, setInitialDifficulty] = useState<Difficulty>("easy");
 
   useEffect(() => {
     const urlMatch = window.location.pathname.match(/^\/(\d{6})$/);
@@ -139,6 +144,32 @@ export default function App() {
     enterRoom(code, name, genId());
   }, []);
 
+  const handleSinglePlayer = useCallback((_name: string, difficulty: Difficulty) => {
+    setSinglePlayerDifficulty(difficulty);
+  }, []);
+
+  const handleCreateMultiplayer = useCallback(async (name: string, diff: Difficulty) => {
+    setCreateLoading(true);
+    try {
+      const res = await fetch(`${getHttpBase()}/api/rooms`, { method: "POST" });
+      if (!res.ok) {
+        throw new Error("创建房间失败");
+      }
+      const data = (await res.json()) as { roomCode: string };
+      setInitialDifficulty(diff);
+      enterRoom(data.roomCode, name, genId());
+    } catch {
+      // Home 会显示错误
+    } finally {
+      setCreateLoading(false);
+    }
+  }, []);
+
+  const handleLeaveSinglePlayer = useCallback(() => {
+    setSinglePlayerDifficulty(null);
+    window.history.replaceState(null, "", "/");
+  }, []);
+
   const handleLeaveRoom = useCallback(() => {
     clearSession();
     setRoomCode(null);
@@ -156,7 +187,7 @@ export default function App() {
           ) : pendingOwnerName ? (
             <div className="text-center mb-4">
               <span className="text-indigo-600 font-bold">{pendingOwnerName}</span>
-              <span className="text-gray-600"> 邀请你一起迷宫淘金</span>
+              <span className="text-gray-600"> 邀请你一起迷径寻宝</span>
             </div>
           ) : null}
           <h3 className="text-lg font-bold text-gray-700 mb-4">输入昵称加入房间</h3>
@@ -190,16 +221,34 @@ export default function App() {
     );
   }
 
+  if (singlePlayerDifficulty) {
+    return (
+      <SinglePlayer
+        difficulty={singlePlayerDifficulty}
+        onLeave={handleLeaveSinglePlayer}
+      />
+    );
+  }
+
   if (roomCode && nickname && playerId) {
     return (
       <Room
         roomCode={roomCode}
         nickname={nickname}
         playerId={playerId}
+        initialDifficulty={initialDifficulty}
         onLeave={handleLeaveRoom}
       />
     );
   }
 
-  return <Home onEnterRoom={handleEnterRoom} urlError={urlError} />;
+  return (
+    <Home
+      onEnterRoom={handleEnterRoom}
+      onSinglePlayer={handleSinglePlayer}
+      onCreateMultiplayer={handleCreateMultiplayer}
+      urlError={urlError}
+      createLoading={createLoading}
+    />
+  );
 }

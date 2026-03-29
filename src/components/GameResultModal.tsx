@@ -4,7 +4,10 @@ interface GameResultModalProps {
   myId: string;
   reason: "gold" | "timeout" | "disconnect" | "surrender";
   isOwner: boolean;
+  connected: boolean;
   gameDuration: number; // 秒
+  stepCount?: number;
+  optimalSteps?: number;
   onPlayAgain: () => void;
   onLeave: () => void;
   onClose: () => void;
@@ -23,10 +26,13 @@ export default function GameResultModal({
   myId,
   reason,
   isOwner,
+  connected,
   onPlayAgain,
   onLeave,
   onClose,
   gameDuration,
+  stepCount,
+  optimalSteps,
 }: GameResultModalProps) {
   const isDraw = winnerId === null;
   const isWinner = !isDraw && winnerId === myId;
@@ -106,6 +112,16 @@ export default function GameResultModal({
         <div style={{ color: "#9ca3af", fontSize: "13px" }}>
           用时 {String(Math.floor(gameDuration / 60)).padStart(2, "0")}:{String(gameDuration % 60).padStart(2, "0")}
         </div>
+        {stepCount !== undefined && (
+          <div style={{ color: "#9ca3af", fontSize: "13px" }}>
+            步数 {stepCount}
+            {optimalSteps !== undefined && optimalSteps > 0 && (
+              <span style={{ color: stepCount <= optimalSteps ? "#10b981" : "#f59e0b", marginLeft: "8px" }}>
+                (最优 {optimalSteps} 步{stepCount <= optimalSteps ? " 🎯" : ""})
+              </span>
+            )}
+          </div>
+        )}
 
         {/* 获胜者信息（非平局时显示） */}
         {!isDraw && (
@@ -143,21 +159,23 @@ export default function GameResultModal({
             <>
               <button
                 onClick={onPlayAgain}
+                disabled={!connected}
                 style={{
                   padding: "12px 24px",
                   fontSize: "16px",
                   fontWeight: "bold",
-                  backgroundColor: "#6366f1",
+                  backgroundColor: connected ? "#6366f1" : "#9ca3af",
                   color: "#ffffff",
                   border: "none",
                   borderRadius: "8px",
-                  cursor: "pointer",
+                  cursor: connected ? "pointer" : "not-allowed",
                   transition: "opacity 0.2s",
+                  opacity: connected ? 1 : 0.6,
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.85")}
-                onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+                onMouseEnter={(e) => { if (connected) { e.currentTarget.style.opacity = "0.85"; } }}
+                onMouseLeave={(e) => { if (connected) { e.currentTarget.style.opacity = "1"; } }}
               >
-                再来一局
+                {connected ? "再来一局" : "重连中..."}
               </button>
               <button
                 onClick={onLeave}
@@ -182,14 +200,14 @@ export default function GameResultModal({
             <>
               <div
                 style={{
-                  color: "#6b7280",
+                  color: connected ? "#6b7280" : "#ef4444",
                   fontSize: "14px",
                   padding: "10px",
                   backgroundColor: "#f3f4f6",
                   borderRadius: "8px",
                 }}
               >
-                等待房主操作...
+                {connected ? "等待房主操作..." : "连接已断开，重连中..."}
               </div>
               <button
                 onClick={onLeave}
