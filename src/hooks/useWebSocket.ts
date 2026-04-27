@@ -5,6 +5,10 @@ type Listener = (msg: ServerMessage) => void;
 
 const HEARTBEAT_INTERVAL = 25_000;
 const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000];
+const MAX_RECONNECT_ATTEMPTS = 12;
+// 这些 close code 表示服务端主动结束会话，不应该重连。
+// 1000 = normal, 1008 = policy violation, 1011 = server error
+const NO_RETRY_CODES = new Set([1000, 1008, 1011]);
 
 export function useWebSocket(url: string | null) {
   const wsRef = useRef<WebSocket | null>(null);
@@ -12,6 +16,7 @@ export function useWebSocket(url: string | null) {
   const [connected, setConnected] = useState(false);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const retryRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closedIntentionallyRef = useRef(false);
   const urlRef = useRef(url);
   urlRef.current = url;
@@ -56,25 +61,36 @@ export function useWebSocket(url: string | null) {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (e) => {
       setConnected(false);
       wsRef.current = null;
       if (heartbeatRef.current) {
         clearInterval(heartbeatRef.current);
         heartbeatRef.current = null;
       }
-      if (!closedIntentionallyRef.current) {
-        const delay =
-          RECONNECT_DELAYS[
-            Math.min(retryRef.current, RECONNECT_DELAYS.length - 1)
-          ]!;
-        retryRef.current++;
-        setTimeout(() => {
-          if (!closedIntentionallyRef.current) {
-            connect();
-          }
-        }, delay);
+      if (closedIntentionallyRef.current) {
+        return;
       }
+      // 服务端主动关闭（房间关闭/不存在/策略错误等）→ 停止重连
+      if (NO_RETRY_CODES.has(e.code)) {
+        closedIntentionallyRef.current = true;
+        return;
+      }
+      // 超过最大重试次数 → 停止
+      if (retryRef.current >= MAX_RECONNECT_ATTEMPTS) {
+        closedIntentionallyRef.current = true;
+        return;
+      }
+      const delay =
+        RECONNECT_DELAYS[
+          Math.min(retryRef.current, RECONNECT_DELAYS.length - 1)
+        ]!;
+      retryRef.current++;
+      reconnectTimerRef.current = setTimeout(() => {
+        if (!closedIntentionallyRef.current) {
+          connect();
+        }
+      }, delay);
     };
 
     ws.onerror = () => {
@@ -92,6 +108,10 @@ export function useWebSocket(url: string | null) {
       if (heartbeatRef.current) {
         clearInterval(heartbeatRef.current);
         heartbeatRef.current = null;
+      }
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
       }
       if (wsRef.current) {
         wsRef.current.close();
@@ -119,7 +139,7 @@ export function useWebSocket(url: string | null) {
   const leave = useCallback(() => {
     closedIntentionallyRef.current = true;
     send({ type: "leave" });
-    wsRef.current?.close();
+    wsRef.current?.close(1000, "Left");
   }, [send]);
 
   return { connected, send, addListener, leave };

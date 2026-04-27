@@ -8,6 +8,7 @@ interface GameResultModalProps {
   gameDuration: number; // 秒
   stepCount?: number;
   optimalSteps?: number;
+  playAgainLoading?: boolean;
   onPlayAgain: () => void;
   onLeave: () => void;
   onClose: () => void;
@@ -33,6 +34,7 @@ export default function GameResultModal({
   gameDuration,
   stepCount,
   optimalSteps,
+  playAgainLoading = false,
 }: GameResultModalProps) {
   const isDraw = winnerId === null;
   const isWinner = !isDraw && winnerId === myId;
@@ -159,23 +161,23 @@ export default function GameResultModal({
             <>
               <button
                 onClick={onPlayAgain}
-                disabled={!connected}
+                disabled={!connected || playAgainLoading}
                 style={{
                   padding: "12px 24px",
                   fontSize: "16px",
                   fontWeight: "bold",
-                  backgroundColor: connected ? "#6366f1" : "#9ca3af",
+                  backgroundColor: connected && !playAgainLoading ? "#6366f1" : "#9ca3af",
                   color: "#ffffff",
                   border: "none",
                   borderRadius: "8px",
-                  cursor: connected ? "pointer" : "not-allowed",
+                  cursor: connected && !playAgainLoading ? "pointer" : "not-allowed",
                   transition: "opacity 0.2s",
-                  opacity: connected ? 1 : 0.6,
+                  opacity: connected && !playAgainLoading ? 1 : 0.6,
                 }}
-                onMouseEnter={(e) => { if (connected) { e.currentTarget.style.opacity = "0.85"; } }}
-                onMouseLeave={(e) => { if (connected) { e.currentTarget.style.opacity = "1"; } }}
+                onMouseEnter={(e) => { if (connected && !playAgainLoading) { e.currentTarget.style.opacity = "0.85"; } }}
+                onMouseLeave={(e) => { if (connected && !playAgainLoading) { e.currentTarget.style.opacity = "1"; } }}
               >
-                {connected ? "再来一局" : "重连中..."}
+                {!connected ? "重连中..." : playAgainLoading ? "启动中..." : "再来一局"}
               </button>
               <button
                 onClick={onLeave}

@@ -50,22 +50,79 @@ export default function Room({ roomCode, nickname, playerId, initialDifficulty, 
   const [showConfetti, setShowConfetti] = useState(false);
   const [showResult, setShowResult] = useState(false);
   const [readyLoading, setReadyLoading] = useState(false);
+  const [startLoading, setStartLoading] = useState(false);
+  const [surrenderLoading, setSurrenderLoading] = useState(false);
+  const [playAgainLoading, setPlayAgainLoading] = useState(false);
+  const [transferLoading, setTransferLoading] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [stepCount, setStepCount] = useState(0);
   const [optimalSteps, setOptimalSteps] = useState(0);
   const [showSurrenderConfirm, setShowSurrenderConfirm] = useState(false);
+  const [toast, setToast] = useState("");
 
   /* ── WebSocket ── */
   const wsUrl = `${getWsBase()}/api/rooms/${roomCode}/ws`;
   const { connected, send, addListener, leave } = useWebSocket(wsUrl);
 
+  // 防止重连时把首页选的初始难度重复下发，覆盖玩家在房间内已经改过的设置
+  const initialDifficultySentRef = useRef(false);
+
+  // 显示一个 3 秒后自动消失的提示
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast((cur) => (cur === msg ? "" : cur)), 3000);
+  };
+
+  // 安全发送：WS 没开则给 toast，避免静默丢消息
+  const safeSend = (msg: Parameters<typeof send>[0], failHint = "网络已断开，请稍候重试"): boolean => {
+    const ok = send(msg);
+    if (!ok) {
+      showToast(failHint);
+    }
+    return ok;
+  };
+
+  // 5 秒兜底：所有 loading 在 WS 断开或超时时自动重置，避免按钮永远卡住
+  useEffect(() => {
+    if (!connected) {
+      setReadyLoading(false);
+      setStartLoading(false);
+      setSurrenderLoading(false);
+      setPlayAgainLoading(false);
+      setTransferLoading(false);
+      return;
+    }
+  }, [connected]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (readyLoading) {
+        setReadyLoading(false);
+      }
+      if (startLoading) {
+        setStartLoading(false);
+      }
+      if (surrenderLoading) {
+        setSurrenderLoading(false);
+      }
+      if (playAgainLoading) {
+        setPlayAgainLoading(false);
+      }
+      if (transferLoading) {
+        setTransferLoading(false);
+      }
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [readyLoading, startLoading, surrenderLoading, playAgainLoading, transferLoading]);
+
   /* ── Effect: Join on connect ── */
   useEffect(() => {
     if (connected) {
       send({ type: "join", playerName: nickname, playerId });
-      // 房主创建时把首页选的难度同步给服务端
-      if (initialDifficulty) {
+      // 房主创建时把首页选的难度同步给服务端，仅一次
+      if (initialDifficulty && !initialDifficultySentRef.current) {
         send({ type: "setDifficulty", difficulty: initialDifficulty });
+        initialDifficultySentRef.current = true;
       }
     }
   }, [connected, nickname, playerId, initialDifficulty, send]);
@@ -120,6 +177,8 @@ export default function Room({ roomCode, nickname, playerId, initialDifficulty, 
             setShowConfetti(false);
             setShowResult(false);
             setReadyLoading(false);
+            setPlayAgainLoading(false);
+            setTransferLoading(false);
             setPlayers((prev) =>
               prev.map((p) => ({ ...p, ready: false })),
             );
@@ -127,6 +186,7 @@ export default function Room({ roomCode, nickname, playerId, initialDifficulty, 
           break;
         case "gameStart": {
           setPhase("playing");
+          setStartLoading(false);
           setStepCount(0);
           setMaze(msg.maze);
           setGameStartsAt(msg.gameStartsAt);
@@ -156,6 +216,8 @@ export default function Room({ roomCode, nickname, playerId, initialDifficulty, 
           setGameEndReason(msg.reason);
           setPhase("ended");
           setShowResult(true);
+          setSurrenderLoading(false);
+          setStartLoading(false);
           // 用 ref 读取最新的 gameStartsAt，避免闭包陈旧值
           if (gameStartsAtRef.current) {
             setGameDuration(Math.floor((Date.now() - gameStartsAtRef.current) / 1000));
@@ -185,7 +247,10 @@ export default function Room({ roomCode, nickname, playerId, initialDifficulty, 
           setDifficulty(msg.difficulty);
           break;
         case "readyChanged":
-          setReadyLoading(false);
+          // 仅当变更的是自己时才重置 loading，避免对方变化误关闭自己的 loading
+          if (msg.playerId === playerId) {
+            setReadyLoading(false);
+          }
           setPlayers((prev) =>
             prev.map((p) =>
               p.id === msg.playerId ? { ...p, ready: msg.ready } : p,
@@ -198,10 +263,16 @@ export default function Room({ roomCode, nickname, playerId, initialDifficulty, 
           break;
         case "error":
           console.error("Server error:", msg.message);
+          setReadyLoading(false);
+          setStartLoading(false);
+          setSurrenderLoading(false);
+          setPlayAgainLoading(false);
+          setTransferLoading(false);
+          showToast(msg.message);
           break;
       }
     });
-  }, [addListener, myId, leave, onLeave]);
+  }, [addListener, myId, leave, onLeave, playerId]);
 
   /* ── Refs for keyboard handler ── */
   const positionsRef = useRef(positions);
@@ -272,6 +343,8 @@ export default function Room({ roomCode, nickname, playerId, initialDifficulty, 
         SFX.move.play();
         setPositions((prev) => ({ ...prev, [myIdRef.current]: newPos }));
         setStepCount((prev) => prev + 1);
+      } else {
+        SFX.bump.play();
       }
     };
 
@@ -335,9 +408,33 @@ export default function Room({ roomCode, nickname, playerId, initialDifficulty, 
         players={players}
         ownerId={ownerId}
         myId={myId}
+        connected={connected}
+        transferLoading={transferLoading}
         onLeave={handleLeave}
-        onTransferOwner={() => send({ type: "transferOwner" })}
+        onTransferOwner={() => {
+          if (transferLoading) {
+            return;
+          }
+          setTransferLoading(true);
+          if (!safeSend({ type: "transferOwner" })) {
+            setTransferLoading(false);
+          }
+        }}
       />
+
+      {/* 网络状态横幅 */}
+      {!connected && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-1.5 text-xs text-amber-700 text-center font-medium">
+          ⚠️ 网络已断开，正在重新连接...
+        </div>
+      )}
+
+      {/* Toast 提示 */}
+      {toast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[400] bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg text-sm">
+          {toast}
+        </div>
+      )}
 
       <div className="flex-1 flex flex-col p-4 overflow-hidden">
         {/* Player cards + controls in one row */}
@@ -389,7 +486,8 @@ export default function Room({ roomCode, nickname, playerId, initialDifficulty, 
               </span>
               <button
                 onClick={() => setShowSurrenderConfirm(true)}
-                className="text-xs px-2 py-1 rounded-lg bg-red-50 text-red-500 border border-red-200 hover:bg-red-100 transition"
+                disabled={!connected}
+                className="text-xs px-2 py-1 rounded-lg bg-red-50 text-red-500 border border-red-200 hover:bg-red-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 投降
               </button>
@@ -402,8 +500,9 @@ export default function Room({ roomCode, nickname, playerId, initialDifficulty, 
               {(["easy", "medium", "hard"] as Difficulty[]).map((d) => (
                 <button
                   key={d}
-                  onClick={() => send({ type: "setDifficulty", difficulty: d })}
-                  className={`px-3 py-1 rounded-lg text-xs font-medium transition ${
+                  onClick={() => safeSend({ type: "setDifficulty", difficulty: d })}
+                  disabled={!connected}
+                  className={`px-3 py-1 rounded-lg text-xs font-medium transition disabled:opacity-50 disabled:cursor-not-allowed ${
                     difficulty === d
                       ? "bg-indigo-100 text-indigo-700 border border-indigo-300"
                       : "bg-gray-100 text-gray-500 hover:bg-gray-200 border border-gray-200"
@@ -413,11 +512,19 @@ export default function Room({ roomCode, nickname, playerId, initialDifficulty, 
                 </button>
               ))}
               <button
-                onClick={() => send({ type: "startGame" })}
-                disabled={!opponent?.ready}
+                onClick={() => {
+                  if (startLoading) {
+                    return;
+                  }
+                  setStartLoading(true);
+                  if (!safeSend({ type: "startGame" })) {
+                    setStartLoading(false);
+                  }
+                }}
+                disabled={!opponent?.ready || !connected || startLoading}
                 className="px-4 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
               >
-                开始游戏
+                {startLoading ? "启动中..." : "开始游戏"}
               </button>
             </>
           )}
@@ -428,9 +535,11 @@ export default function Room({ roomCode, nickname, playerId, initialDifficulty, 
                   return;
                 }
                 setReadyLoading(true);
-                send({ type: "ready" });
+                if (!safeSend({ type: "ready" })) {
+                  setReadyLoading(false);
+                }
               }}
-              disabled={readyLoading}
+              disabled={readyLoading || !connected}
               className={`px-4 py-1.5 rounded-lg text-sm font-bold transition disabled:opacity-50 disabled:cursor-not-allowed ${
                 players.find((p) => p.id === myId)?.ready
                   ? "bg-green-500 text-white hover:bg-green-600"
@@ -499,10 +608,14 @@ export default function Room({ roomCode, nickname, playerId, initialDifficulty, 
           gameDuration={gameDuration}
           stepCount={stepCount}
           optimalSteps={optimalSteps}
+          playAgainLoading={playAgainLoading}
           onPlayAgain={() => {
-            const sent = send({ type: "playAgain" });
-            if (!sent) {
-              alert("连接已断开，正在重连，请稍后再试");
+            if (playAgainLoading) {
+              return;
+            }
+            setPlayAgainLoading(true);
+            if (!safeSend({ type: "playAgain" }, "连接已断开，请稍候重试")) {
+              setPlayAgainLoading(false);
             }
           }}
           onLeave={handleLeave}
@@ -527,16 +640,21 @@ export default function Room({ roomCode, nickname, playerId, initialDifficulty, 
               </button>
               <button
                 onClick={() => {
-                  const sent = send({ type: "surrender" });
+                  if (surrenderLoading) {
+                    return;
+                  }
+                  setSurrenderLoading(true);
+                  const sent = safeSend({ type: "surrender" }, "网络已断开，请稍候重试");
                   if (sent) {
                     setShowSurrenderConfirm(false);
                   } else {
-                    alert("网络连接断开，请刷新页面重试");
+                    setSurrenderLoading(false);
                   }
                 }}
-                className="flex-1 py-2.5 rounded-lg bg-red-500 text-white font-medium hover:bg-red-600 transition"
+                disabled={surrenderLoading || !connected}
+                className="flex-1 py-2.5 rounded-lg bg-red-500 text-white font-medium hover:bg-red-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                确定投降
+                {surrenderLoading ? "投降中..." : "确定投降"}
               </button>
             </div>
           </div>

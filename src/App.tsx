@@ -73,9 +73,9 @@ export default function App() {
           }
           return res.json();
         })
-        .then((info: { ownerName?: string; closed?: boolean }) => {
-          if (info.closed) {
-            throw new Error("房间已关闭");
+        .then((info: { roomCode?: string; ownerName?: string; closed?: boolean }) => {
+          if (!info.roomCode || info.closed) {
+            throw new Error("房间不存在或已关闭");
           }
           if (info.ownerName) {
             setPendingOwnerName(info.ownerName);
@@ -119,8 +119,8 @@ export default function App() {
         playerCount: number;
         closed: boolean;
       };
-      if (info.closed) {
-        throw new Error("房间已关闭");
+      if (!info.roomCode || info.closed) {
+        throw new Error("房间不存在或已关闭");
       }
       if (info.playerCount >= 2) {
         throw new Error("房间已满，无法加入");

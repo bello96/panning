@@ -7,18 +7,27 @@ interface Env {
   MAZE_ROOM: DurableObjectNamespace;
 }
 
-function corsHeaders(): HeadersInit {
+const ALLOWED_ORIGINS = [
+  "https://panning.dengjiabei.cn",
+  "http://localhost:5173",
+  "http://localhost:4173",
+  "http://127.0.0.1:5173",
+];
+
+function corsHeaders(origin: string | null): HeadersInit {
+  const allow = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0]!;
   return {
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": allow,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
+    "Vary": "Origin",
   };
 }
 
-function jsonResponse(data: unknown, status = 200): Response {
+function jsonResponse(data: unknown, status = 200, origin: string | null = null): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", ...corsHeaders() },
+    headers: { "Content-Type": "application/json", ...corsHeaders(origin) },
   });
 }
 
@@ -26,10 +35,11 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
+    const origin = request.headers.get("Origin");
 
     // CORS preflight
     if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: corsHeaders() });
+      return new Response(null, { status: 204, headers: corsHeaders(origin) });
     }
 
     // POST /api/rooms — create room
@@ -38,11 +48,14 @@ export default {
       const id = env.MAZE_ROOM.idFromName(roomCode);
       const stub = env.MAZE_ROOM.get(id);
       // Initialize the room by sending a setup request
-      await stub.fetch(new Request("https://dummy/setup", {
+      const setupRes = await stub.fetch(new Request("https://dummy/setup", {
         method: "POST",
         body: JSON.stringify({ roomCode }),
       }));
-      return jsonResponse({ roomCode });
+      if (!setupRes.ok) {
+        return jsonResponse({ error: "failed to create room" }, 500, origin);
+      }
+      return jsonResponse({ roomCode }, 200, origin);
     }
 
     // Room-specific routes: /api/rooms/:code/...
@@ -56,8 +69,9 @@ export default {
       // GET /api/rooms/:code — room info
       if (!subPath && request.method === "GET") {
         const res = await stub.fetch(new Request("https://dummy/info"));
-        const data = await res.json();
-        return jsonResponse(data);
+        // 透传 DO 的 status（200 / 404），并 attach CORS 头
+        const data = await res.json().catch(() => ({ error: "invalid response" }));
+        return jsonResponse(data, res.status, origin);
       }
 
       // POST /api/rooms/:code/quickleave — quick leave (sendBeacon)
@@ -67,7 +81,7 @@ export default {
           method: "POST",
           body,
         }));
-        return jsonResponse({ ok: true });
+        return jsonResponse({ ok: true }, 200, origin);
       }
 
       // GET /api/rooms/:code/ws — WebSocket upgrade
@@ -76,6 +90,6 @@ export default {
       }
     }
 
-    return jsonResponse({ error: "Not found" }, 404);
+    return jsonResponse({ error: "Not found" }, 404, origin);
   },
 };

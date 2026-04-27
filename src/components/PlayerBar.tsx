@@ -7,6 +7,8 @@ interface PlayerBarProps {
   players: PlayerInfo[];
   ownerId: string;
   myId: string;
+  connected?: boolean;
+  transferLoading?: boolean;
   onLeave: () => void;
   onTransferOwner?: () => void;
 }
@@ -17,6 +19,8 @@ export default function PlayerBar({
   players,
   ownerId,
   myId,
+  connected = true,
+  transferLoading = false,
   onLeave,
   onTransferOwner,
 }: PlayerBarProps) {
@@ -88,9 +92,10 @@ export default function PlayerBar({
         {myId === ownerId && players.length === 2 && phase !== "playing" && onTransferOwner && (
           <button
             onClick={onTransferOwner}
-            className="text-sm px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 transition font-medium"
+            disabled={!connected || transferLoading}
+            className="text-sm px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 transition font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            转让房主
+            {transferLoading ? "转让中..." : "转让房主"}
           </button>
         )}
         <button
